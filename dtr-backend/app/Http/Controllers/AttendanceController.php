@@ -75,8 +75,8 @@ class AttendanceController extends Controller
             'user' => $this->authService->serializeUser($user),
             'month' => $selectedMonth->format('Y-m'),
             'settings' => $this->serializeSettings($setting),
-            'today' => $this->serializeToday($todayLog, $setting, $attendanceDate),
-            'summary' => $this->serializeSummary($monthLogs, $selectedMonth, $today),
+            'today' => $this->serializeToday($todayLog, $setting, $attendanceDate, $today),
+            'summary' => $this->serializeSummary($monthLogs, $setting, $selectedMonth, $today),
             'records' => $monthLogs
                 ->map(fn (DTRLog $log): array => $this->serializeRecord($log, $setting))
                 ->values(),
@@ -173,7 +173,12 @@ class AttendanceController extends Controller
         return response()->json([
             'message' => $this->actionMessage($action),
             'record' => $this->serializeRecord($todayLog, $user->attendanceSetting),
-            'today' => $this->serializeToday($todayLog, $user->attendanceSetting, $attendanceDate),
+            'today' => $this->serializeToday(
+                $todayLog,
+                $user->attendanceSetting,
+                $attendanceDate,
+                CarbonImmutable::now()
+            ),
         ]);
     }
 
@@ -240,7 +245,8 @@ class AttendanceController extends Controller
     private function serializeToday(
         ?DTRLog $log,
         ?AttendanceSetting $setting,
-        CarbonInterface $today,
+        CarbonInterface $attendanceDate,
+        CarbonInterface $currentMoment,
     ): array {
         $todayBreaks = $this->serializeTodayBreaks($log, $setting);
         $openBreak = collect($todayBreaks)->firstWhere('status', 'on_break');
@@ -249,8 +255,11 @@ class AttendanceController extends Controller
             ->first(fn (array $break): bool => in_array($break['status'], ['not_started', 'on_break'], true));
 
         $status = 'not_started';
+        $isAbsent = $this->isAbsentForDate($log, $setting, $attendanceDate, $currentMoment);
 
-        if ($openBreak !== null) {
+        if ($isAbsent) {
+            $status = 'absent';
+        } elseif ($openBreak !== null) {
             $status = 'on_break';
         } elseif ($log?->time_out !== null) {
             $status = 'completed';
@@ -263,7 +272,7 @@ class AttendanceController extends Controller
         $undertimeMinutes = $log !== null ? $this->calculateUndertimeMinutes($log, $setting) : 0;
 
         return [
-            'date' => $today->toDateString(),
+            'date' => $attendanceDate->toDateString(),
             'status' => $status,
             'setup_required' => ! $scheduleConfigured,
             'time_in' => $log?->time_in?->toIso8601String(),
@@ -274,7 +283,9 @@ class AttendanceController extends Controller
             'undertime_minutes' => $undertimeMinutes,
             'is_late' => $lateMinutes > 0,
             'is_undertime' => $undertimeMinutes > 0,
-            'can_clock_in' => $scheduleConfigured && ($log === null || $log->time_in === null),
+            'can_clock_in' => $scheduleConfigured
+                && ! $isAbsent
+                && ($log === null || $log->time_in === null),
             'can_clock_out' => $setting !== null
                 && $setting->hasScheduleSetup()
                 && $log !== null
@@ -358,8 +369,9 @@ class AttendanceController extends Controller
 
     private function serializeSummary(
         Collection $logs,
+        ?AttendanceSetting $setting,
         CarbonImmutable $selectedMonth,
-        CarbonImmutable $today,
+        CarbonImmutable $currentMoment,
     ): array {
         $clockInMinutes = $logs
             ->pluck('time_in')
@@ -378,18 +390,11 @@ class AttendanceController extends Controller
             ->filter(static fn (int $minutes): bool => $minutes > 0)
             ->values();
 
-        $attendanceDays = $logs
-            ->filter(static fn (DTRLog $log): bool => $log->time_in !== null)
-            ->count();
-
         return [
             'average_clock_in_minutes' => $this->averageMinutes($clockInMinutes),
             'average_clock_out_minutes' => $this->averageMinutes($clockOutMinutes),
             'average_working_minutes' => $this->averageMinutes($workingMinutes) ?? 0,
-            'absent_days' => max(
-                0,
-                $this->countExpectedWeekdays($selectedMonth, $today) - $attendanceDays
-            ),
+            'absent_days' => $this->countAbsentDays($logs, $setting, $selectedMonth, $currentMoment),
         ];
     }
 
@@ -519,25 +524,26 @@ class AttendanceController extends Controller
         return (int) round($values->sum() / $values->count());
     }
 
-    private function countExpectedWeekdays(
+    private function countAbsentDays(
+        Collection $logs,
+        ?AttendanceSetting $setting,
         CarbonImmutable $selectedMonth,
-        CarbonImmutable $today,
+        CarbonImmutable $currentMoment,
     ): int {
-        $monthStart = $selectedMonth->startOfMonth();
-
-        if ($monthStart->greaterThan($today->startOfMonth())) {
-            return 0;
-        }
-
-        $monthEnd = $selectedMonth->isSameMonth($today)
-            ? $today
-            : $selectedMonth->endOfMonth();
-
+        $attendanceDates = $logs
+            ->filter(static fn (DTRLog $log): bool => $log->time_in !== null && $log->date !== null)
+            ->map(static fn (DTRLog $log): string => $log->date->toDateString())
+            ->flip();
         $count = 0;
-        $cursor = $monthStart;
+        $cursor = $selectedMonth->startOfMonth();
+        $monthEnd = $selectedMonth->endOfMonth();
 
         while ($cursor->lessThanOrEqualTo($monthEnd)) {
-            if (! $cursor->isWeekend()) {
+            if (
+                ! $cursor->isWeekend()
+                && $this->shouldCountAbsenceForDate($cursor, $setting, $currentMoment)
+                && ! $attendanceDates->has($cursor->toDateString())
+            ) {
                 $count++;
             }
 
@@ -545,6 +551,43 @@ class AttendanceController extends Controller
         }
 
         return $count;
+    }
+
+    private function shouldCountAbsenceForDate(
+        CarbonImmutable $date,
+        ?AttendanceSetting $setting,
+        CarbonImmutable $currentMoment,
+    ): bool {
+        if ($date->isWeekend()) {
+            return false;
+        }
+
+        if ($setting === null || ! $setting->hasScheduleSetup()) {
+            return $date->lessThan($currentMoment->startOfDay());
+        }
+
+        $cutoff = $setting->absenceCutoffForDate($date);
+
+        return $cutoff !== null && $currentMoment->greaterThanOrEqualTo($cutoff);
+    }
+
+    private function isAbsentForDate(
+        ?DTRLog $log,
+        ?AttendanceSetting $setting,
+        CarbonInterface $attendanceDate,
+        CarbonInterface $currentMoment,
+    ): bool {
+        if ($log?->time_in !== null) {
+            return false;
+        }
+
+        $date = CarbonImmutable::parse($attendanceDate->toDateString());
+
+        return $this->shouldCountAbsenceForDate(
+            $date,
+            $setting,
+            CarbonImmutable::instance($currentMoment)
+        );
     }
 
     private function resolveAttendanceDateForMoment(

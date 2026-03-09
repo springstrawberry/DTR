@@ -49,7 +49,7 @@ export type AttendanceSettings = {
 
 export type AttendanceToday = {
   date: string
-  status: "not_started" | "in_progress" | "on_break" | "completed"
+  status: "not_started" | "in_progress" | "on_break" | "completed" | "absent"
   setup_required: boolean
   time_in: string | null
   time_out: string | null

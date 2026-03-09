@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
-import { addDays, endOfMonth, format, isSameMonth, isWeekend, parse } from "date-fns"
+import { addDays, endOfMonth, format, isWeekend, parse } from "date-fns"
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -56,6 +56,7 @@ import {
 const currentMonthKey = format(new Date(), "yyyy-MM")
 const breakSetupItemValue = "break-setup"
 const scheduleSetupItemValue = "schedule-setup"
+const ABSENCE_THRESHOLD_MINUTES = 60
 
 const initialSettingsForm = {
   morningBreakMinutes: "15",
@@ -70,6 +71,7 @@ const statusLabels = {
   in_progress: "Currently on shift",
   on_break: "Break is active",
   completed: "Shift completed",
+  absent: "Marked absent",
 } as const
 
 const statCards = [
@@ -783,9 +785,7 @@ export function AttendanceDashboard() {
                       Set your before-lunch, lunch, and after-lunch durations
                     </h2>
                     <p className="mt-2 text-sm leading-6 text-slate-600">
-                      Use minutes. Set a slot to 0 if you do not use that break. Break
-                      durations are separate from the work schedule used for late and
-                      undertime.
+                      Use minutes for break durations. 
                     </p>
                   </div>
 
@@ -888,10 +888,6 @@ export function AttendanceDashboard() {
                 Track before-lunch, lunch, and after-lunch punches
               </h2>
             </div>
-            <p className="text-sm leading-6 text-slate-500">
-              Breaks are enforced in order. Excess minutes are calculated when you punch
-              back in.
-            </p>
           </div>
 
           <div className="mt-5 grid gap-4 lg:grid-cols-3">
@@ -1104,12 +1100,16 @@ export function AttendanceDashboard() {
                   <div className="mt-3 flex flex-wrap justify-end gap-2">
                     <span
                       className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        dashboard.today.late_minutes > 0
+                        dashboard.today.status === "absent"
+                          ? "bg-rose-100 text-rose-700"
+                          : dashboard.today.late_minutes > 0
                           ? "bg-rose-100 text-rose-700"
                           : "bg-slate-200 text-slate-600"
                       }`}
                     >
-                      {dashboard.today.time_in
+                      {dashboard.today.status === "absent"
+                        ? "Marked absent"
+                        : dashboard.today.time_in
                         ? dashboard.today.late_minutes > 0
                           ? `Late: ${dashboard.today.late_minutes} min`
                           : "Late: 0 min"
@@ -1117,12 +1117,16 @@ export function AttendanceDashboard() {
                     </span>
                     <span
                       className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        dashboard.today.undertime_minutes > 0
+                        dashboard.today.status === "absent"
+                          ? "bg-slate-200 text-slate-500"
+                          : dashboard.today.undertime_minutes > 0
                           ? "bg-amber-100 text-amber-700"
                           : "bg-slate-200 text-slate-600"
                       }`}
                     >
-                      {dashboard.today.time_out
+                      {dashboard.today.status === "absent"
+                        ? "No clock out"
+                        : dashboard.today.time_out
                         ? dashboard.today.undertime_minutes > 0
                           ? `Undertime: ${dashboard.today.undertime_minutes} min`
                           : "No undertime"
@@ -1693,7 +1697,7 @@ function applyActionResultToDashboard(
     ...current,
     today: result.today,
     records,
-    summary: recalculateSummary(records, selectedMonth),
+    summary: recalculateSummary(records, selectedMonth, current.settings),
   }
 }
 
@@ -1715,14 +1719,11 @@ function mergeMonthlyRecord(
 
 function recalculateSummary(
   records: AttendanceRecord[],
-  selectedMonth: string
+  selectedMonth: string,
+  settings: AttendanceDashboardPayload["settings"]
 ): AttendanceSummary {
   const selectedMonthDate = parse(`${selectedMonth}-01`, "yyyy-MM-dd", new Date())
   const now = new Date()
-  const monthBoundary = isSameMonth(selectedMonthDate, now)
-    ? now
-    : endOfMonth(selectedMonthDate)
-
   const clockInMinutes = records
     .map((record) => toClockMinutes(record.time_in))
     .filter((value): value is number => value !== null)
@@ -1732,17 +1733,43 @@ function recalculateSummary(
   const workingMinutes = records
     .map((record) => record.working_minutes)
     .filter((minutes) => minutes > 0)
-  const attendanceDays = records.filter((record) => record.time_in !== null).length
 
   return {
     average_clock_in_minutes: averageMinutes(clockInMinutes),
     average_clock_out_minutes: averageMinutes(clockOutMinutes),
     average_working_minutes: averageMinutes(workingMinutes) ?? 0,
-    absent_days: Math.max(
-      0,
-      countExpectedWeekdays(selectedMonthDate, monthBoundary) - attendanceDays
-    ),
+    absent_days: countAbsentDays(records, settings, selectedMonthDate, now),
   }
+}
+
+function countAbsentDays(
+  records: AttendanceRecord[],
+  settings: AttendanceDashboardPayload["settings"],
+  selectedMonthDate: Date,
+  now: Date
+): number {
+  const attendedDates = new Set(
+    records.filter((record) => record.time_in !== null).map((record) => record.date)
+  )
+  let absentDays = 0
+  let cursor = selectedMonthDate
+  const monthEnd = endOfMonth(selectedMonthDate)
+
+  while (cursor <= monthEnd) {
+    const dayKey = format(cursor, "yyyy-MM-dd")
+
+    if (
+      !isWeekend(cursor) &&
+      shouldCountAbsenceForDate(cursor, settings, now) &&
+      !attendedDates.has(dayKey)
+    ) {
+      absentDays += 1
+    }
+
+    cursor = addDays(cursor, 1)
+  }
+
+  return Math.max(absentDays, 0)
 }
 
 function averageMinutes(values: number[]): number | null {
@@ -1763,21 +1790,38 @@ function toClockMinutes(value: string | null): number | null {
   return date.getHours() * 60 + date.getMinutes()
 }
 
-function countExpectedWeekdays(monthStart: Date, monthEnd: Date): number {
-  if (monthStart > monthEnd) {
-    return 0
+function shouldCountAbsenceForDate(
+  date: Date,
+  settings: AttendanceDashboardPayload["settings"],
+  now: Date
+): boolean {
+  if (isWeekend(date)) {
+    return false
   }
 
-  let count = 0
-  let cursor = monthStart
-
-  while (cursor <= monthEnd) {
-    if (!isWeekend(cursor)) {
-      count += 1
-    }
-
-    cursor = addDays(cursor, 1)
+  if (!settings.schedule_configured || !settings.shift_start_time) {
+    return date < new Date(now.getFullYear(), now.getMonth(), now.getDate())
   }
 
-  return count
+  const cutoff = getAbsenceCutoff(date, settings.shift_start_time)
+
+  return cutoff !== null && now >= cutoff
+}
+
+function getAbsenceCutoff(date: Date, shiftStartTime: string | null): Date | null {
+  if (!shiftStartTime) {
+    return null
+  }
+
+  const [hours, minutes] = shiftStartTime.split(":")
+
+  if (hours === undefined || minutes === undefined) {
+    return null
+  }
+
+  const cutoff = new Date(date)
+  cutoff.setHours(Number(hours), Number(minutes), 0, 0)
+  cutoff.setMinutes(cutoff.getMinutes() + ABSENCE_THRESHOLD_MINUTES)
+
+  return cutoff
 }
