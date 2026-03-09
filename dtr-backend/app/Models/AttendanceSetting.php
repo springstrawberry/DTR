@@ -4,8 +4,10 @@ namespace App\Models;
 
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 class AttendanceSetting extends Model
@@ -35,6 +37,7 @@ class AttendanceSetting extends Model
         'afternoon_break_minutes',
         'shift_start_time',
         'shift_end_time',
+        'status',
     ];
 
     /**
@@ -48,12 +51,29 @@ class AttendanceSetting extends Model
             'morning_break_minutes' => 'integer',
             'lunch_break_minutes' => 'integer',
             'afternoon_break_minutes' => 'integer',
+            'status' => 'boolean',
         ];
     }
 
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Scope to filter active attendance settings.
+     */
+    public function scopeActive(Builder $query): Builder
+    {
+        return $query->whereRaw('CAST("status" AS boolean) = true');
+    }
+
+    /**
+     * Scope to filter inactive attendance settings.
+     */
+    public function scopeInactive(Builder $query): Builder
+    {
+        return $query->whereRaw('CAST("status" AS boolean) = false');
     }
 
     public function breakDefinitions(): array

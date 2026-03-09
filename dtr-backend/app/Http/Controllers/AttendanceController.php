@@ -12,6 +12,7 @@ use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use LogicException;
 
@@ -42,11 +43,21 @@ class AttendanceController extends Controller
             'month' => ['nullable', 'date_format:Y-m'],
         ]);
 
-        $user = $request->user()->loadMissing('attendanceSetting');
+        $user = $request->user()->loadMissing(['attendanceSettings']);
         $today = CarbonImmutable::now();
         $selectedMonth = isset($validated['month'])
             ? CarbonImmutable::parse($validated['month'].'-01')->startOfMonth()
             : $today->startOfMonth();
+
+        // Get the active attendance setting
+        $setting = $user->attendanceSettings()
+            ->active()
+            ->first();
+        
+        // If no active setting, use the first one
+        if ($setting === null) {
+            $setting = $user->attendanceSettings()->first();
+        }
 
         $monthLogs = $user->dtrLogs()
             ->with('breaks')
@@ -57,7 +68,6 @@ class AttendanceController extends Controller
             ->orderByDesc('date')
             ->get();
 
-        $setting = $user->attendanceSetting;
         $attendanceDate = $this->resolveAttendanceDateForMoment($user, $setting, $today);
 
         $todayLog = $monthLogs->first(
@@ -75,6 +85,8 @@ class AttendanceController extends Controller
             'user' => $this->authService->serializeUser($user),
             'month' => $selectedMonth->format('Y-m'),
             'settings' => $this->serializeSettings($setting),
+            'active_setting' => $this->serializeAttendanceSetting($setting),
+            'all_settings' => $user->attendanceSettings->map(fn ($s) => $this->serializeAttendanceSetting($s))->values(),
             'today' => $this->serializeToday($todayLog, $setting, $attendanceDate),
             'summary' => $this->serializeSummary($monthLogs, $selectedMonth, $today),
             'records' => $monthLogs
@@ -115,11 +127,35 @@ class AttendanceController extends Controller
 
         $setting->save();
 
-        $user->setRelation('attendanceSetting', $setting);
-
         return response()->json([
             'message' => 'Attendance settings saved.',
             'settings' => $this->serializeSettings($setting->fresh()),
+        ]);
+    }
+
+    public function switchAttendanceSetting(Request $request, int $settingId): JsonResponse
+    {
+        $user = $request->user();
+        
+        $setting = AttendanceSetting::query()
+            ->where('user_id', $user->id)
+            ->where('id', $settingId)
+            ->firstOrFail();
+
+        // Deactivate all other settings
+        AttendanceSetting::query()
+            ->where('user_id', $user->id)
+            ->where('id', '!=', $settingId)
+            ->update(['status' => DB::raw('false')]);
+
+        // Activate the selected setting
+        $setting->update(['status' => DB::raw('true')]);
+
+        $user->load('attendanceSettings');
+
+        return response()->json([
+            'message' => 'Attendance setting switched successfully.',
+            'all_settings' => $user->attendanceSettings->map(fn ($s) => $this->serializeAttendanceSetting($s))->values(),
         ]);
     }
 
@@ -131,7 +167,9 @@ class AttendanceController extends Controller
             ]);
         }
 
-        $user = $request->user()->loadMissing('attendanceSetting');
+        $user = $request->user()->loadMissing('attendanceSettings');
+        $attendanceSetting = $user->attendanceSettings()->active()->first()
+            ?? $user->attendanceSettings()->first();
 
         try {
             $todayLog = match ($action) {
@@ -166,20 +204,33 @@ class AttendanceController extends Controller
 
         $attendanceDate = $this->resolveAttendanceDateForMoment(
             $user,
-            $user->attendanceSetting,
+            $attendanceSetting,
             CarbonImmutable::now()
         );
 
         return response()->json([
             'message' => $this->actionMessage($action),
-            'record' => $this->serializeRecord($todayLog, $user->attendanceSetting),
-            'today' => $this->serializeToday($todayLog, $user->attendanceSetting, $attendanceDate),
+            'record' => $this->serializeRecord($todayLog, $attendanceSetting),
+            'today' => $this->serializeToday($todayLog, $attendanceSetting, $attendanceDate),
         ]);
     }
 
     private function afterBreakAction(DTRBreak $break): DTRLog
     {
         return $break->dtrLog()->with('breaks')->firstOrFail();
+    }
+
+    private function serializeAttendanceSetting(AttendanceSetting $setting): array
+    {
+        return [
+            'id' => $setting->id,
+            'morning_break_minutes' => (int) $setting->morning_break_minutes,
+            'lunch_break_minutes' => (int) $setting->lunch_break_minutes,
+            'afternoon_break_minutes' => (int) $setting->afternoon_break_minutes,
+            'shift_start_time' => $setting->formattedShiftStartTime(),
+            'shift_end_time' => $setting->formattedShiftEndTime(),
+            'status' => (bool) $setting->status,
+        ];
     }
 
     private function serializeSettings(?AttendanceSetting $setting): array

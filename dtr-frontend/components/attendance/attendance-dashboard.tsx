@@ -22,6 +22,7 @@ import { logoutAccount } from "@/lib/auth-api"
 import {
   fetchAttendanceDashboard,
   recordAttendanceAction,
+  switchAttendanceSetting,
   updateAttendanceSettings,
   type AttendanceAction,
   type AttendanceBreak,
@@ -142,6 +143,7 @@ export function AttendanceDashboard() {
   )
   const [settingsForm, setSettingsForm] = useState(initialSettingsForm)
   const [currentTime, setCurrentTime] = useState(new Date())
+  const [isMounted, setIsMounted] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isActing, setIsActing] = useState(false)
   const [isSavingSettings, setIsSavingSettings] = useState(false)
@@ -170,9 +172,13 @@ export function AttendanceDashboard() {
   }, [router])
 
   useEffect(() => {
+    setIsMounted(true)
+  }, [])
+
+  useEffect(() => {
     const intervalId = window.setInterval(() => {
       setCurrentTime(new Date())
-    }, 1000 * 30)
+    }, 1000)
 
     return () => {
       window.clearInterval(intervalId)
@@ -411,6 +417,30 @@ export function AttendanceDashboard() {
     void handleSaveScheduleSetup()
   }
 
+  async function handleSwitchAttendanceSetting(settingId: number) {
+    if (!session) {
+      return
+    }
+
+    setIsActing(true)
+    setSettingsError("")
+    setSettingsNotice("")
+
+    try {
+      const response = await switchAttendanceSetting(session.token, settingId)
+      await refreshDashboard(session)
+      setSettingsNotice(response.message)
+    } catch (caughtError) {
+      setSettingsError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "Unable to switch attendance setting right now."
+      )
+    } finally {
+      setIsActing(false)
+    }
+  }
+
   async function handleLogout() {
     if (!session) {
       return
@@ -564,7 +594,7 @@ export function AttendanceDashboard() {
                 <span>Place your attendance</span>
                 <span className="inline-flex items-center gap-2 rounded-full bg-orange-50 px-3 py-1 font-medium text-orange-500">
                   <Clock3 className="size-4" />
-                  {format(currentTime, "h:mm a")}
+                  {isMounted ? format(currentTime, "h:mm:ss a") : "--:--:--"}
                 </span>
                 <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">
                   {dashboard ? statusLabels[dashboard.today.status] : "Loading status"}
@@ -613,12 +643,6 @@ export function AttendanceDashboard() {
             </div>
           </div>
 
-          {/* <div className="mt-5 rounded-[1.5rem] border border-slate-100 bg-slate-50/80 px-4 py-4 text-sm leading-6 text-slate-600">
-            {setupRequired
-              ? "Save your work schedule first. The system uses the saved start time and end time to calculate late and undertime."
-              : "Your saved schedule is now used to evaluate late and undertime. Configured breaks still run in order and any excess break time is recorded automatically."}
-          </div> */}
-
           {pageError ? (
             <div className="mt-4 rounded-[1.25rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               {pageError}
@@ -630,8 +654,21 @@ export function AttendanceDashboard() {
               {pageNotice}
             </div>
           ) : null}
+
+          {settingsError ? (
+            <div className="mt-4 rounded-[1.25rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {settingsError}
+            </div>
+          ) : null}
+
+          {settingsNotice ? (
+            <div className="mt-4 rounded-[1.25rem] border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700">
+              {settingsNotice}
+            </div>
+          ) : null}
         </section>
 
+        {/* ── Work Schedule ── */}
         <section
           className={`rounded-[2rem] border bg-white/94 p-5 shadow-[0_24px_70px_rgba(15,23,42,0.08)] backdrop-blur sm:p-6 ${
             setupRequired ? "border-rose-200" : "border-white/80"
@@ -653,10 +690,6 @@ export function AttendanceDashboard() {
                     <h2 className="mt-2 text-2xl font-semibold text-slate-950">
                       Set the shift hours used for late and undertime
                     </h2>
-                    {/* <p className="mt-2 text-sm leading-6 text-slate-600">
-                      Example: 8:00 AM to 5:00 PM. The system compares actual time in
-                      and time out directly against this schedule.
-                    </p> */}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
@@ -682,7 +715,65 @@ export function AttendanceDashboard() {
               </AccordionTrigger>
 
               <AccordionContent className="pt-5">
+                {/* All shifts associated with the user */}
+                {dashboard?.all_settings && dashboard.all_settings.length > 0 && (
+                  <div className="mb-6">
+                    <p className="mb-3 text-xs font-semibold tracking-[0.14em] text-slate-400 uppercase">
+                      Your work shifts — click any to make it active
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {dashboard.all_settings.map((setting, index) => {
+                        const startLabel =
+                          formatTimeValue(setting.shift_start_time) ?? "--:--"
+                        const endLabel =
+                          formatTimeValue(setting.shift_end_time) ?? "--:--"
+                        const isActive = setting.status
+
+                        return (
+                          <button
+                            key={setting.id}
+                            type="button"
+                            disabled={isActing || isActive}
+                            onClick={() =>
+                              handleSwitchAttendanceSetting(setting.id)
+                            }
+                            className={`inline-flex items-center gap-2.5 rounded-2xl border px-4 py-2.5 text-sm font-medium transition ${
+                              isActive
+                                ? "border-violet-300 bg-violet-50 text-violet-700 shadow-[0_0_0_3px_rgba(139,92,246,0.10)] cursor-default"
+                                : "border-slate-200 bg-white text-slate-600 hover:border-violet-200 hover:bg-violet-50 hover:text-violet-600 cursor-pointer"
+                            }`}
+                          >
+                            <span
+                              className={`size-2 rounded-full shrink-0 ${
+                                isActive ? "bg-violet-500" : "bg-slate-300"
+                              }`}
+                            />
+                            <span>
+                              {startLabel} — {endLabel}
+                            </span>
+                            {isActive ? (
+                              <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-600">
+                                Active
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-400">
+                                Switch
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Form to save/edit shift times */}
                 <form onSubmit={handleScheduleSetupSubmit}>
+                  <p className="mb-3 text-xs font-semibold tracking-[0.14em] text-slate-400 uppercase">
+                    {hasConfiguredSchedule
+                      ? "Edit active shift times"
+                      : "Add a new shift"}
+                  </p>
                   <div className="grid gap-4 md:grid-cols-3">
                     <div className="space-y-2">
                       <label
@@ -1081,56 +1172,6 @@ export function AttendanceDashboard() {
                   {dashboard?.user.name ?? session?.user.name}
                 </h2>
               </div>
-              {/* <div className="rounded-[1.25rem] bg-slate-50 px-4 py-3 text-right">
-                <p className="text-sm text-slate-500">Current shift</p>
-                <p className="mt-1 text-sm font-medium text-slate-700">
-                  {dashboard?.today.time_in
-                    ? `${formatClockTime(dashboard.today.time_in)} to ${
-                        dashboard.today.time_out
-                          ? formatClockTime(dashboard.today.time_out)
-                          : "Open"
-                      }`
-                    : "No attendance recorded yet"}
-                </p>
-                <p className="mt-2 text-sm text-slate-500">Scheduled shift</p>
-                <p className="mt-1 text-sm font-medium text-slate-700">
-                  {dashboard?.settings.schedule_label
-                    ? `${formatTimeValue(dashboard.settings.shift_start_time) ?? "--:--"} to ${
-                        formatTimeValue(dashboard.settings.shift_end_time) ?? "--:--"
-                      }`
-                    : "Set work schedule"}
-                </p>
-                {dashboard ? (
-                  <div className="mt-3 flex flex-wrap justify-end gap-2">
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        dashboard.today.late_minutes > 0
-                          ? "bg-rose-100 text-rose-700"
-                          : "bg-slate-200 text-slate-600"
-                      }`}
-                    >
-                      {dashboard.today.time_in
-                        ? dashboard.today.late_minutes > 0
-                          ? `Late: ${dashboard.today.late_minutes} min`
-                          : "Late: 0 min"
-                        : "Awaiting clock in"}
-                    </span>
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        dashboard.today.undertime_minutes > 0
-                          ? "bg-amber-100 text-amber-700"
-                          : "bg-slate-200 text-slate-600"
-                      }`}
-                    >
-                      {dashboard.today.time_out
-                        ? dashboard.today.undertime_minutes > 0
-                          ? `Undertime: ${dashboard.today.undertime_minutes} min`
-                          : "No undertime"
-                        : "Awaiting clock out"}
-                    </span>
-                  </div>
-                ) : null}
-              </div> */}
             </div>
 
             <div className="overflow-hidden rounded-[1.75rem] border border-slate-100">
@@ -1381,19 +1422,31 @@ function formatClockTime(value: string | null): string {
 }
 
 function formatTimeValue(value: string | null): string | null {
-  if (!value) {
+  if (!value || typeof value !== "string") {
     return null
   }
 
-  const [hours, minutes] = value.split(":")
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return null
+  }
 
-  if (hours === undefined || minutes === undefined) {
-    return value
+  // Split on colon to get hours and minutes
+  const parts = trimmed.split(":")
+  if (parts.length < 2) {
+    return null
+  }
+
+  const hours = parseInt(parts[0], 10)
+  const minutes = parseInt(parts[1], 10)
+
+  // Validate parsed numbers
+  if (isNaN(hours) || isNaN(minutes)) {
+    return null
   }
 
   const date = new Date()
-
-  date.setHours(Number(hours), Number(minutes), 0, 0)
+  date.setHours(hours, minutes, 0, 0)
 
   return format(date, "h:mm a")
 }

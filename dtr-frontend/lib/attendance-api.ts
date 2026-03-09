@@ -5,6 +5,16 @@ const API_BASE_URL =
 
 export type BreakType = "morning_break" | "lunch" | "afternoon_break"
 
+export type AttendanceSetting = {
+  id: number
+  morning_break_minutes: number
+  lunch_break_minutes: number
+  afternoon_break_minutes: number
+  status: boolean
+  shift_start_time: Date | null
+  shift_end_time: Date | null
+}
+
 export type AttendanceAction =
   | "time_in"
   | "morning_break_out"
@@ -97,6 +107,8 @@ export type AttendanceDashboardPayload = {
   user: AuthUser
   month: string
   settings: AttendanceSettings
+  active_setting: AttendanceSetting | null
+  all_settings: AttendanceSetting[]
   today: AttendanceToday
   summary: AttendanceSummary
   records: AttendanceRecord[]
@@ -208,6 +220,24 @@ export async function recordAttendanceAction(
 ): Promise<AttendanceActionPayload> {
   return apiRequest<AttendanceActionPayload>(
     `/api/attendance/actions/${action}`,
+    token,
+    {
+      method: "POST",
+    }
+  )
+}
+
+type SwitchAttendanceSettingPayload = {
+  message: string
+  all_settings: AttendanceSetting[]
+}
+
+export async function switchAttendanceSetting(
+  token: string,
+  settingId: number
+): Promise<SwitchAttendanceSettingPayload> {
+  return apiRequest<SwitchAttendanceSettingPayload>(
+    `/api/attendance/settings/${settingId}/switch`,
     token,
     {
       method: "POST",
