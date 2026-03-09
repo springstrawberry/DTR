@@ -8,6 +8,8 @@ import {
   ArrowUpRight,
   CalendarDays,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleOff,
   Clock3,
   Coffee,
@@ -42,7 +44,6 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
-import { Calendar } from "@/components/ui/calendar"
 import { Input } from "@/components/ui/input"
 import {
   Table,
@@ -57,6 +58,21 @@ const currentMonthKey = format(new Date(), "yyyy-MM")
 const breakSetupItemValue = "break-setup"
 const scheduleSetupItemValue = "schedule-setup"
 const ABSENCE_THRESHOLD_MINUTES = 60
+const monthPickerStartYear = 2020
+const monthPickerMonthLabels = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+]
 
 const initialSettingsForm = {
   morningBreakMinutes: "15",
@@ -136,9 +152,7 @@ export function AttendanceDashboard() {
   const hasInitializedScheduleSetup = useRef(false)
   const [session, setSession] = useState<Session | null>(null)
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey)
-  const [pickerMonth, setPickerMonth] = useState(
-    parse(`${currentMonthKey}-01`, "yyyy-MM-dd", new Date())
-  )
+  const [pickerYear, setPickerYear] = useState(Number(currentMonthKey.slice(0, 4)))
   const [dashboard, setDashboard] = useState<AttendanceDashboardPayload | null>(
     null
   )
@@ -430,17 +444,18 @@ export function AttendanceDashboard() {
     }
   }
 
-  function updateSelectedMonth(date: Date) {
-    const nextMonth = format(date, "yyyy-MM")
+  function updateSelectedMonth(monthIndex: number, year: number) {
+    const nextDate = new Date(year, monthIndex, 1)
+    const nextMonth = format(nextDate, "yyyy-MM")
 
     setSelectedMonth(nextMonth)
-    setPickerMonth(date)
+    setPickerYear(year)
     setIsMonthPickerOpen(false)
   }
 
   function toggleMonthPicker() {
     if (!isMonthPickerOpen) {
-      setPickerMonth(monthDate)
+      setPickerYear(monthDate.getFullYear())
     }
 
     setIsMonthPickerOpen((current) => !current)
@@ -520,6 +535,9 @@ export function AttendanceDashboard() {
   }
 
   const monthDate = parse(`${selectedMonth}-01`, "yyyy-MM-dd", new Date())
+  const now = new Date()
+  const maxPickerYear = now.getFullYear()
+  const maxPickerMonthIndex = now.getMonth()
   const firstName =
     dashboard?.user.name.split(" ")[0] ?? session?.user.name.split(" ")[0] ?? "there"
   const setupRequired = dashboard?.today.setup_required ?? true
@@ -995,7 +1013,7 @@ export function AttendanceDashboard() {
               onClick={toggleMonthPicker}
               className="inline-flex w-fit items-center gap-2 rounded-full px-4 py-2 text-xl font-semibold text-violet-600 transition hover:bg-violet-50"
               aria-expanded={isMonthPickerOpen}
-              aria-label="Open calendar month picker"
+              aria-label="Open month and year picker"
             >
               <CalendarDays className="size-5" />
               <span>{format(monthDate, "MMMM yyyy")}</span>
@@ -1016,23 +1034,70 @@ export function AttendanceDashboard() {
             </Button>
 
             {isMonthPickerOpen ? (
-              <div className="absolute left-5 top-[calc(100%-0.5rem)] z-20 w-fit rounded-[1.5rem] border border-slate-200 bg-white p-2 shadow-[0_24px_60px_rgba(15,23,42,0.14)] sm:left-6">
-                <Calendar
-                  mode="single"
-                  month={pickerMonth}
-                  selected={pickerMonth}
-                  onSelect={(date) => {
-                    if (date) {
-                      updateSelectedMonth(date)
+              <div className="absolute left-5 top-[calc(100%-0.5rem)] z-20 w-[18rem] rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-[0_24px_60px_rgba(15,23,42,0.14)] sm:left-6">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="size-9 rounded-full border-slate-200"
+                    onClick={() =>
+                      setPickerYear((current) =>
+                        Math.max(monthPickerStartYear, current - 1)
+                      )
                     }
-                  }}
-                  onMonthChange={setPickerMonth}
-                  captionLayout="dropdown"
-                  startMonth={new Date(2020, 0)}
-                  endMonth={new Date()}
-                  disabled={{ after: new Date() }}
-                  className="rounded-[1.25rem] bg-white"
-                />
+                    disabled={pickerYear <= monthPickerStartYear}
+                    aria-label="Show previous year"
+                  >
+                    <ChevronLeft className="size-4" />
+                  </Button>
+                  <div className="text-sm font-semibold tracking-[0.16em] text-slate-500 uppercase">
+                    {pickerYear}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="size-9 rounded-full border-slate-200"
+                    onClick={() =>
+                      setPickerYear((current) => Math.min(maxPickerYear, current + 1))
+                    }
+                    disabled={pickerYear >= maxPickerYear}
+                    aria-label="Show next year"
+                  >
+                    <ChevronRight className="size-4" />
+                  </Button>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {monthPickerMonthLabels.map((label, monthIndex) => {
+                    const isDisabled =
+                      pickerYear === maxPickerYear && monthIndex > maxPickerMonthIndex
+                    const isSelected =
+                      pickerYear === monthDate.getFullYear() &&
+                      monthIndex === monthDate.getMonth()
+
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        className={`rounded-2xl border px-3 py-2 text-sm font-medium transition ${
+                          isSelected
+                            ? "border-violet-200 bg-violet-100 text-violet-700"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-violet-200 hover:bg-violet-50"
+                        } ${
+                          isDisabled
+                            ? "cursor-not-allowed opacity-40 hover:border-slate-200 hover:bg-white"
+                            : ""
+                        }`}
+                        onClick={() => updateSelectedMonth(monthIndex, pickerYear)}
+                        disabled={isDisabled}
+                        aria-pressed={isSelected}
+                      >
+                        {label}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             ) : null}
           </div>
