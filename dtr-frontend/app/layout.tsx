@@ -2,7 +2,7 @@ import type { Metadata } from "next"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "DTR Access",
+  title: "Daily Time Record",
   description: "Login and account creation for the DTR platform",
 }
 

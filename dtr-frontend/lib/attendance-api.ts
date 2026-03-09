@@ -31,9 +31,14 @@ export type AttendanceBreak = {
 
 export type AttendanceSettings = {
   configured: boolean
+  breaks_configured: boolean
+  schedule_configured: boolean
   morning_break_minutes: number
   lunch_break_minutes: number
   afternoon_break_minutes: number
+  shift_start_time: string | null
+  shift_end_time: string | null
+  schedule_label: string | null
   breaks: Array<{
     type: BreakType
     label: string
@@ -48,6 +53,12 @@ export type AttendanceToday = {
   setup_required: boolean
   time_in: string | null
   time_out: string | null
+  scheduled_start_time: string | null
+  scheduled_end_time: string | null
+  late_minutes: number
+  undertime_minutes: number
+  is_late: boolean
+  is_undertime: boolean
   can_clock_in: boolean
   can_clock_out: boolean
   breaks: AttendanceBreak[]
@@ -65,7 +76,11 @@ export type AttendanceRecord = {
   date: string
   time_in: string | null
   time_out: string | null
+  scheduled_start_time: string | null
+  scheduled_end_time: string | null
   working_minutes: number
+  late_minutes: number
+  undertime_minutes: number
   break_exceeded_minutes: number
   breaks: Array<{
     type: BreakType
@@ -94,9 +109,11 @@ type AttendanceActionPayload = {
 }
 
 type UpdateAttendanceSettingsInput = {
-  morning_break_minutes: number
-  lunch_break_minutes: number
-  afternoon_break_minutes: number
+  morning_break_minutes?: number
+  lunch_break_minutes?: number
+  afternoon_break_minutes?: number
+  shift_start_time?: string
+  shift_end_time?: string
 }
 
 type UpdateAttendanceSettingsPayload = {

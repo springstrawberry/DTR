@@ -279,7 +279,7 @@ export function AuthExperience() {
                       </label>
                       <Input
                         id="name"
-                        placeholder="Denise Valerie"
+                        placeholder="Full Name"
                         value={form.name}
                         onChange={(event) => updateField("name", event.target.value)}
                         required
@@ -294,7 +294,7 @@ export function AuthExperience() {
                     <Input
                       id="email"
                       type="email"
-                      placeholder="denise@example.com"
+                      placeholder="sample@gmail.com"
                       value={form.email}
                       onChange={(event) => updateField("email", event.target.value)}
                       required

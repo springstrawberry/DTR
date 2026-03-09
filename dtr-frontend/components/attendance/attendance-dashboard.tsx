@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
-import { format, parse } from "date-fns"
+import { addDays, endOfMonth, format, isSameMonth, isWeekend, parse } from "date-fns"
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -55,11 +55,14 @@ import {
 
 const currentMonthKey = format(new Date(), "yyyy-MM")
 const breakSetupItemValue = "break-setup"
+const scheduleSetupItemValue = "schedule-setup"
 
 const initialSettingsForm = {
   morningBreakMinutes: "15",
   lunchBreakMinutes: "60",
   afternoonBreakMinutes: "15",
+  shiftStartTime: "",
+  shiftEndTime: "",
 }
 
 const statusLabels = {
@@ -128,6 +131,7 @@ export function AttendanceDashboard() {
   const router = useRouter()
   const monthPickerRef = useRef<HTMLDivElement | null>(null)
   const hasInitializedBreakSetup = useRef(false)
+  const hasInitializedScheduleSetup = useRef(false)
   const [session, setSession] = useState<Session | null>(null)
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey)
   const [pickerMonth, setPickerMonth] = useState(
@@ -141,14 +145,18 @@ export function AttendanceDashboard() {
   const [isLoading, setIsLoading] = useState(true)
   const [isActing, setIsActing] = useState(false)
   const [isSavingSettings, setIsSavingSettings] = useState(false)
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false)
   const [isLeaving, setIsLeaving] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false)
   const [isBreakSetupOpen, setIsBreakSetupOpen] = useState(true)
+  const [isScheduleSetupOpen, setIsScheduleSetupOpen] = useState(true)
   const [pageError, setPageError] = useState("")
   const [pageNotice, setPageNotice] = useState("")
   const [settingsError, setSettingsError] = useState("")
   const [settingsNotice, setSettingsNotice] = useState("")
+  const [scheduleError, setScheduleError] = useState("")
+  const [scheduleNotice, setScheduleNotice] = useState("")
 
   useEffect(() => {
     const storedSession = readStoredSession()
@@ -223,8 +231,13 @@ export function AttendanceDashboard() {
         syncSettingsForm(payload)
 
         if (!hasInitializedBreakSetup.current) {
-          setIsBreakSetupOpen(!payload.settings.configured)
+          setIsBreakSetupOpen(!payload.settings.breaks_configured)
           hasInitializedBreakSetup.current = true
+        }
+
+        if (!hasInitializedScheduleSetup.current) {
+          setIsScheduleSetupOpen(!payload.settings.schedule_configured)
+          hasInitializedScheduleSetup.current = true
         }
       } catch (caughtError) {
         if (!isActive) {
@@ -262,6 +275,8 @@ export function AttendanceDashboard() {
       morningBreakMinutes: String(payload.settings.morning_break_minutes),
       lunchBreakMinutes: String(payload.settings.lunch_break_minutes),
       afternoonBreakMinutes: String(payload.settings.afternoon_break_minutes),
+      shiftStartTime: payload.settings.shift_start_time ?? "",
+      shiftEndTime: payload.settings.shift_end_time ?? "",
     })
   }
 
@@ -284,7 +299,11 @@ export function AttendanceDashboard() {
 
     try {
       const response = await recordAttendanceAction(session.token, action)
-      await refreshDashboard(session)
+      setDashboard((current) =>
+        current === null
+          ? current
+          : applyActionResultToDashboard(current, response, selectedMonth)
+      )
       setPageNotice(response.message)
     } catch (caughtError) {
       setPageError(
@@ -344,9 +363,52 @@ export function AttendanceDashboard() {
     }
   }
 
+  async function handleSaveScheduleSetup() {
+    if (!session) {
+      return
+    }
+
+    if (
+      settingsForm.shiftStartTime.trim() === "" ||
+      settingsForm.shiftEndTime.trim() === ""
+    ) {
+      setScheduleError("Schedule start and end time are required.")
+      setScheduleNotice("")
+      return
+    }
+
+    setIsSavingSchedule(true)
+    setScheduleError("")
+    setScheduleNotice("")
+
+    try {
+      const response = await updateAttendanceSettings(session.token, {
+        shift_start_time: settingsForm.shiftStartTime,
+        shift_end_time: settingsForm.shiftEndTime,
+      })
+
+      await refreshDashboard(session)
+      setScheduleNotice(response.message)
+      setIsScheduleSetupOpen(false)
+    } catch (caughtError) {
+      setScheduleError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "Unable to save the work schedule right now."
+      )
+    } finally {
+      setIsSavingSchedule(false)
+    }
+  }
+
   function handleBreakSetupSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     void handleSaveBreakSetup()
+  }
+
+  function handleScheduleSetupSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    void handleSaveScheduleSetup()
   }
 
   async function handleLogout() {
@@ -383,23 +445,34 @@ export function AttendanceDashboard() {
   }
 
   function handleBreakSetupOpenChange(value: string) {
-    if (setupRequired) {
-      setIsBreakSetupOpen(true)
-      return
-    }
-
     setIsBreakSetupOpen(value === breakSetupItemValue)
     setSettingsError("")
     setSettingsNotice("")
   }
 
+  function handleScheduleSetupOpenChange(value: string) {
+    setIsScheduleSetupOpen(value === scheduleSetupItemValue)
+    setScheduleError("")
+    setScheduleNotice("")
+  }
+
   function handleBreakSetupFieldChange(
-    field: keyof typeof initialSettingsForm,
+    field: "morningBreakMinutes" | "lunchBreakMinutes" | "afternoonBreakMinutes",
     value: string
   ) {
     setSettingsForm((current) => ({
       ...current,
       [field]: sanitizeMinutesInput(value),
+    }))
+  }
+
+  function handleScheduleFieldChange(
+    field: "shiftStartTime" | "shiftEndTime",
+    value: string
+  ) {
+    setSettingsForm((current) => ({
+      ...current,
+      [field]: value,
     }))
   }
 
@@ -448,7 +521,8 @@ export function AttendanceDashboard() {
   const firstName =
     dashboard?.user.name.split(" ")[0] ?? session?.user.name.split(" ")[0] ?? "there"
   const setupRequired = dashboard?.today.setup_required ?? true
-  const hasConfiguredBreakSetup = dashboard?.settings.configured ?? false
+  const hasConfiguredBreakSetup = dashboard?.settings.breaks_configured ?? false
+  const hasConfiguredSchedule = dashboard?.settings.schedule_configured ?? false
   const breakSetupSummary = [
     {
       label: "Before lunch",
@@ -461,6 +535,16 @@ export function AttendanceDashboard() {
     {
       label: "After lunch",
       minutes: settingsForm.afternoonBreakMinutes || "0",
+    },
+  ]
+  const scheduleSummary = [
+    {
+      label: "Start",
+      value: formatTimeValue(settingsForm.shiftStartTime) ?? "--:--",
+    },
+    {
+      label: "End",
+      value: formatTimeValue(settingsForm.shiftEndTime) ?? "--:--",
     },
   ]
 
@@ -487,7 +571,7 @@ export function AttendanceDashboard() {
                 </span>
                 {setupRequired ? (
                   <span className="rounded-full bg-rose-50 px-3 py-1 font-medium text-rose-600">
-                    Break setup required
+                    Work schedule required
                   </span>
                 ) : null}
               </div>
@@ -529,11 +613,11 @@ export function AttendanceDashboard() {
             </div>
           </div>
 
-          <div className="mt-5 rounded-[1.5rem] border border-slate-100 bg-slate-50/80 px-4 py-4 text-sm leading-6 text-slate-600">
+          {/* <div className="mt-5 rounded-[1.5rem] border border-slate-100 bg-slate-50/80 px-4 py-4 text-sm leading-6 text-slate-600">
             {setupRequired
-              ? "Save your break setup first. The system will not allow clock in, lunch, or break punches until your before-lunch, lunch, and after-lunch durations are set."
-              : "Configured breaks run in order. If a return punch exceeds the allowed minutes, the excess is recorded automatically and shown in today's break cards."}
-          </div>
+              ? "Save your work schedule first. The system uses the saved start time and end time to calculate late and undertime."
+              : "Your saved schedule is now used to evaluate late and undertime. Configured breaks still run in order and any excess break time is recorded automatically."}
+          </div> */}
 
           {pageError ? (
             <div className="mt-4 rounded-[1.25rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -555,7 +639,136 @@ export function AttendanceDashboard() {
         >
           <Accordion
             type="single"
-            collapsible={!setupRequired}
+            collapsible
+            value={isScheduleSetupOpen ? scheduleSetupItemValue : undefined}
+            onValueChange={handleScheduleSetupOpenChange}
+          >
+            <AccordionItem value={scheduleSetupItemValue} className="border-none">
+              <AccordionTrigger className="py-0 hover:no-underline">
+                <div className="flex flex-1 flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                  <div className="max-w-2xl">
+                    <p className="text-sm font-medium tracking-[0.18em] text-slate-400 uppercase">
+                      Work Schedule
+                    </p>
+                    <h2 className="mt-2 text-2xl font-semibold text-slate-950">
+                      Set the shift hours used for late and undertime
+                    </h2>
+                    {/* <p className="mt-2 text-sm leading-6 text-slate-600">
+                      Example: 8:00 AM to 5:00 PM. The system compares actual time in
+                      and time out directly against this schedule.
+                    </p> */}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    {scheduleSummary.map((item) => (
+                      <span
+                        key={item.label}
+                        className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700"
+                      >
+                        {item.label}: {item.value}
+                      </span>
+                    ))}
+                    <span
+                      className={`rounded-full px-3 py-1.5 text-sm font-semibold ${
+                        hasConfiguredSchedule
+                          ? "bg-violet-50 text-violet-600"
+                          : "bg-rose-50 text-rose-600"
+                      }`}
+                    >
+                      {hasConfiguredSchedule ? "Edit schedule" : "Schedule required"}
+                    </span>
+                  </div>
+                </div>
+              </AccordionTrigger>
+
+              <AccordionContent className="pt-5">
+                <form onSubmit={handleScheduleSetupSubmit}>
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="space-y-2">
+                      <label
+                        className="text-sm font-medium text-slate-700"
+                        htmlFor="shiftStartTime"
+                      >
+                        Start time
+                      </label>
+                      <Input
+                        id="shiftStartTime"
+                        type="time"
+                        step="60"
+                        value={settingsForm.shiftStartTime}
+                        onChange={(event) =>
+                          handleScheduleFieldChange(
+                            "shiftStartTime",
+                            event.target.value
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label
+                        className="text-sm font-medium text-slate-700"
+                        htmlFor="shiftEndTime"
+                      >
+                        End time
+                      </label>
+                      <Input
+                        id="shiftEndTime"
+                        type="time"
+                        step="60"
+                        value={settingsForm.shiftEndTime}
+                        onChange={(event) =>
+                          handleScheduleFieldChange("shiftEndTime", event.target.value)
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs leading-5 text-slate-500">
+                      Once the schedule is saved, each time in is checked against the
+                      scheduled start time, and each time out is checked against the
+                      scheduled end time.
+                    </p>
+
+                    <Button
+                      type="submit"
+                      className="h-11 rounded-2xl bg-slate-950 text-white hover:bg-slate-800"
+                      disabled={isSavingSchedule}
+                    >
+                      <Save className="size-4" />
+                      {isSavingSchedule
+                        ? "Saving..."
+                        : hasConfiguredSchedule
+                          ? "Save schedule changes"
+                          : "Save work schedule"}
+                    </Button>
+                  </div>
+                </form>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+
+          {scheduleError ? (
+            <div className="mt-4 rounded-[1.25rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {scheduleError}
+            </div>
+          ) : null}
+
+          {scheduleNotice ? (
+            <div className="mt-4 rounded-[1.25rem] border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700">
+              {scheduleNotice}
+            </div>
+          ) : null}
+        </section>
+
+        <section
+          className={`rounded-[2rem] border bg-white/94 p-5 shadow-[0_24px_70px_rgba(15,23,42,0.08)] backdrop-blur sm:p-6 ${
+            setupRequired ? "border-rose-200" : "border-white/80"
+          }`}
+        >
+          <Accordion
+            type="single"
+            collapsible
             value={isBreakSetupOpen ? breakSetupItemValue : undefined}
             onValueChange={handleBreakSetupOpenChange}
           >
@@ -570,8 +783,9 @@ export function AttendanceDashboard() {
                       Set your before-lunch, lunch, and after-lunch durations
                     </h2>
                     <p className="mt-2 text-sm leading-6 text-slate-600">
-                      Use minutes. Set a slot to 0 if you do not use that break. This
-                      setup must be saved before any attendance action can be recorded.
+                      Use minutes. Set a slot to 0 if you do not use that break. Break
+                      durations are separate from the work schedule used for late and
+                      undertime.
                     </p>
                   </div>
 
@@ -586,12 +800,12 @@ export function AttendanceDashboard() {
                     ))}
                     <span
                       className={`rounded-full px-3 py-1.5 text-sm font-semibold ${
-                        setupRequired
-                          ? "bg-rose-50 text-rose-600"
-                          : "bg-violet-50 text-violet-600"
+                        hasConfiguredBreakSetup
+                          ? "bg-violet-50 text-violet-600"
+                          : "bg-slate-100 text-slate-600"
                       }`}
                     >
-                      {setupRequired ? "Complete setup" : "Edit break setup"}
+                      {hasConfiguredBreakSetup ? "Edit break setup" : "Break options"}
                     </span>
                   </div>
                 </div>
@@ -867,7 +1081,7 @@ export function AttendanceDashboard() {
                   {dashboard?.user.name ?? session?.user.name}
                 </h2>
               </div>
-              <div className="rounded-[1.25rem] bg-slate-50 px-4 py-3 text-right">
+              {/* <div className="rounded-[1.25rem] bg-slate-50 px-4 py-3 text-right">
                 <p className="text-sm text-slate-500">Current shift</p>
                 <p className="mt-1 text-sm font-medium text-slate-700">
                   {dashboard?.today.time_in
@@ -878,7 +1092,45 @@ export function AttendanceDashboard() {
                       }`
                     : "No attendance recorded yet"}
                 </p>
-              </div>
+                <p className="mt-2 text-sm text-slate-500">Scheduled shift</p>
+                <p className="mt-1 text-sm font-medium text-slate-700">
+                  {dashboard?.settings.schedule_label
+                    ? `${formatTimeValue(dashboard.settings.shift_start_time) ?? "--:--"} to ${
+                        formatTimeValue(dashboard.settings.shift_end_time) ?? "--:--"
+                      }`
+                    : "Set work schedule"}
+                </p>
+                {dashboard ? (
+                  <div className="mt-3 flex flex-wrap justify-end gap-2">
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        dashboard.today.late_minutes > 0
+                          ? "bg-rose-100 text-rose-700"
+                          : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {dashboard.today.time_in
+                        ? dashboard.today.late_minutes > 0
+                          ? `Late: ${dashboard.today.late_minutes} min`
+                          : "Late: 0 min"
+                        : "Awaiting clock in"}
+                    </span>
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        dashboard.today.undertime_minutes > 0
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {dashboard.today.time_out
+                        ? dashboard.today.undertime_minutes > 0
+                          ? `Undertime: ${dashboard.today.undertime_minutes} min`
+                          : "No undertime"
+                        : "Awaiting clock out"}
+                    </span>
+                  </div>
+                ) : null}
+              </div> */}
             </div>
 
             <div className="overflow-hidden rounded-[1.75rem] border border-slate-100">
@@ -886,8 +1138,11 @@ export function AttendanceDashboard() {
                 <TableHeader className="bg-slate-100/80 text-slate-500">
                   <TableRow className="border-none hover:bg-transparent">
                     <TableHead className="px-4 py-3 font-semibold">Date</TableHead>
+                    <TableHead className="px-4 py-3 font-semibold">Schedule</TableHead>
                     <TableHead className="px-4 py-3 font-semibold">Clock In</TableHead>
                     <TableHead className="px-4 py-3 font-semibold">Clock Out</TableHead>
+                    <TableHead className="px-4 py-3 font-semibold">Late</TableHead>
+                    <TableHead className="px-4 py-3 font-semibold">Undertime</TableHead>
                     <TableHead className="px-4 py-3 font-semibold">
                       Working Hr&apos;s
                     </TableHead>
@@ -901,7 +1156,7 @@ export function AttendanceDashboard() {
                     <TableRow className="hover:bg-transparent">
                       <TableCell
                         className="px-4 py-10 text-center text-slate-400"
-                        colSpan={5}
+                        colSpan={8}
                       >
                         Loading attendance for {firstName}...
                       </TableCell>
@@ -915,6 +1170,13 @@ export function AttendanceDashboard() {
                         <TableCell className="px-4 py-3 font-medium text-slate-700">
                           {formatDisplayDate(record.date)}
                         </TableCell>
+                        <TableCell className="px-4 py-3 text-slate-600">
+                          {record.scheduled_start_time && record.scheduled_end_time
+                            ? `${formatTimeValue(record.scheduled_start_time) ?? "--:--"} - ${
+                                formatTimeValue(record.scheduled_end_time) ?? "--:--"
+                              }`
+                            : "No schedule"}
+                        </TableCell>
                         <TableCell className="px-4 py-3">
                           <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-600">
                             <ArrowDownLeft className="size-4" />
@@ -925,6 +1187,36 @@ export function AttendanceDashboard() {
                           <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-600">
                             <ArrowUpRight className="size-4" />
                             {formatClockTime(record.time_out)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="px-4 py-3">
+                          <span
+                            className={`font-semibold ${
+                              record.late_minutes > 0
+                                ? "text-rose-600"
+                                : "text-slate-500"
+                            }`}
+                          >
+                            {record.time_in
+                              ? record.late_minutes > 0
+                                ? `${record.late_minutes} min`
+                                : "--"
+                              : "--"}
+                          </span>
+                        </TableCell>
+                        <TableCell className="px-4 py-3">
+                          <span
+                            className={`font-semibold ${
+                              record.undertime_minutes > 0
+                                ? "text-amber-600"
+                                : "text-slate-600"
+                            }`}
+                          >
+                            {record.time_out
+                              ? record.undertime_minutes > 0
+                                ? `${record.undertime_minutes} min`
+                                : "None"
+                              : "--"}
                           </span>
                         </TableCell>
                         <TableCell className="px-4 py-3 font-semibold text-slate-900">
@@ -955,7 +1247,7 @@ export function AttendanceDashboard() {
                     <TableRow className="hover:bg-transparent">
                       <TableCell
                         className="px-4 py-10 text-center text-slate-400"
-                        colSpan={5}
+                        colSpan={8}
                       >
                         No attendance entries yet for {format(monthDate, "MMMM yyyy")}.
                       </TableCell>
@@ -1088,6 +1380,24 @@ function formatClockTime(value: string | null): string {
   return format(new Date(value), "h:mm a")
 }
 
+function formatTimeValue(value: string | null): string | null {
+  if (!value) {
+    return null
+  }
+
+  const [hours, minutes] = value.split(":")
+
+  if (hours === undefined || minutes === undefined) {
+    return value
+  }
+
+  const date = new Date()
+
+  date.setHours(Number(hours), Number(minutes), 0, 0)
+
+  return format(date, "h:mm a")
+}
+
 function formatDisplayDate(value: string): string {
   return format(new Date(`${value}T00:00:00`), "EEE, dd MMM, yyyy")
 }
@@ -1147,8 +1457,29 @@ function buildMonthlyDtrPrintDocument({
             return `
               <tr>
                 <td>${escapeHtml(formatDisplayDate(record.date))}</td>
+                <td>${escapeHtml(
+                  record.scheduled_start_time && record.scheduled_end_time
+                    ? `${formatTimeValue(record.scheduled_start_time) ?? "--:--"} - ${
+                        formatTimeValue(record.scheduled_end_time) ?? "--:--"
+                      }`
+                    : "No schedule"
+                )}</td>
                 <td>${escapeHtml(formatClockTime(record.time_in))}</td>
                 <td>${escapeHtml(formatClockTime(record.time_out))}</td>
+                <td>${escapeHtml(
+                  record.time_in
+                    ? record.late_minutes > 0
+                      ? `${record.late_minutes} min`
+                      : "--"
+                    : "--"
+                )}</td>
+                <td>${escapeHtml(
+                  record.time_out
+                    ? record.undertime_minutes > 0
+                      ? `${record.undertime_minutes} min`
+                      : "None"
+                    : "--"
+                )}</td>
                 <td>${escapeHtml(formatDuration(record.working_minutes))}</td>
                 <td>${breaksMarkup}</td>
               </tr>
@@ -1157,7 +1488,7 @@ function buildMonthlyDtrPrintDocument({
           .join("")
       : `
         <tr>
-          <td colspan="5" class="empty-state">No attendance entries for ${escapeHtml(monthLabel)}.</td>
+          <td colspan="8" class="empty-state">No attendance entries for ${escapeHtml(monthLabel)}.</td>
         </tr>
       `
 
@@ -1306,8 +1637,11 @@ function buildMonthlyDtrPrintDocument({
         <thead>
           <tr>
             <th>Date</th>
+            <th>Schedule</th>
             <th>Clock In</th>
             <th>Clock Out</th>
+            <th>Late</th>
+            <th>Undertime</th>
             <th>Working Hr's</th>
             <th>Breaks</th>
           </tr>
@@ -1336,4 +1670,114 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;")
+}
+
+function applyActionResultToDashboard(
+  current: AttendanceDashboardPayload,
+  result: {
+    record: AttendanceRecord
+    today: AttendanceDashboardPayload["today"]
+  },
+  selectedMonth: string
+): AttendanceDashboardPayload {
+  if (!isRecordInSelectedMonth(result.record, selectedMonth)) {
+    return {
+      ...current,
+      today: result.today,
+    }
+  }
+
+  const records = mergeMonthlyRecord(current.records, result.record)
+
+  return {
+    ...current,
+    today: result.today,
+    records,
+    summary: recalculateSummary(records, selectedMonth),
+  }
+}
+
+function isRecordInSelectedMonth(
+  record: AttendanceRecord,
+  selectedMonth: string
+): boolean {
+  return record.date.startsWith(`${selectedMonth}-`)
+}
+
+function mergeMonthlyRecord(
+  records: AttendanceRecord[],
+  nextRecord: AttendanceRecord
+): AttendanceRecord[] {
+  return [...records.filter((record) => record.id !== nextRecord.id), nextRecord].sort(
+    (left, right) => right.date.localeCompare(left.date)
+  )
+}
+
+function recalculateSummary(
+  records: AttendanceRecord[],
+  selectedMonth: string
+): AttendanceSummary {
+  const selectedMonthDate = parse(`${selectedMonth}-01`, "yyyy-MM-dd", new Date())
+  const now = new Date()
+  const monthBoundary = isSameMonth(selectedMonthDate, now)
+    ? now
+    : endOfMonth(selectedMonthDate)
+
+  const clockInMinutes = records
+    .map((record) => toClockMinutes(record.time_in))
+    .filter((value): value is number => value !== null)
+  const clockOutMinutes = records
+    .map((record) => toClockMinutes(record.time_out))
+    .filter((value): value is number => value !== null)
+  const workingMinutes = records
+    .map((record) => record.working_minutes)
+    .filter((minutes) => minutes > 0)
+  const attendanceDays = records.filter((record) => record.time_in !== null).length
+
+  return {
+    average_clock_in_minutes: averageMinutes(clockInMinutes),
+    average_clock_out_minutes: averageMinutes(clockOutMinutes),
+    average_working_minutes: averageMinutes(workingMinutes) ?? 0,
+    absent_days: Math.max(
+      0,
+      countExpectedWeekdays(selectedMonthDate, monthBoundary) - attendanceDays
+    ),
+  }
+}
+
+function averageMinutes(values: number[]): number | null {
+  if (values.length === 0) {
+    return null
+  }
+
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)
+}
+
+function toClockMinutes(value: string | null): number | null {
+  if (!value) {
+    return null
+  }
+
+  const date = new Date(value)
+
+  return date.getHours() * 60 + date.getMinutes()
+}
+
+function countExpectedWeekdays(monthStart: Date, monthEnd: Date): number {
+  if (monthStart > monthEnd) {
+    return 0
+  }
+
+  let count = 0
+  let cursor = monthStart
+
+  while (cursor <= monthEnd) {
+    if (!isWeekend(cursor)) {
+      count += 1
+    }
+
+    cursor = addDays(cursor, 1)
+  }
+
+  return count
 }
