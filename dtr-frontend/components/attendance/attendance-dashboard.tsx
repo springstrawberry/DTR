@@ -2,12 +2,14 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
-import { addDays, endOfMonth, format, isSameMonth, isWeekend, parse } from "date-fns"
+import { addDays, endOfMonth, format, isWeekend, parse } from "date-fns"
 import {
   ArrowDownLeft,
   ArrowUpRight,
   CalendarDays,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleOff,
   Clock3,
   Coffee,
@@ -43,7 +45,6 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
-import { Calendar } from "@/components/ui/calendar"
 import { Input } from "@/components/ui/input"
 import {
   Table,
@@ -57,6 +58,22 @@ import {
 const currentMonthKey = format(new Date(), "yyyy-MM")
 const breakSetupItemValue = "break-setup"
 const scheduleSetupItemValue = "schedule-setup"
+const ABSENCE_THRESHOLD_MINUTES = 60
+const monthPickerStartYear = 2020
+const monthPickerMonthLabels = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+]
 
 const initialSettingsForm = {
   morningBreakMinutes: "15",
@@ -71,6 +88,7 @@ const statusLabels = {
   in_progress: "Currently on shift",
   on_break: "Break is active",
   completed: "Shift completed",
+  absent: "Marked absent",
 } as const
 
 const statCards = [
@@ -135,9 +153,7 @@ export function AttendanceDashboard() {
   const hasInitializedScheduleSetup = useRef(false)
   const [session, setSession] = useState<Session | null>(null)
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey)
-  const [pickerMonth, setPickerMonth] = useState(
-    parse(`${currentMonthKey}-01`, "yyyy-MM-dd", new Date())
-  )
+  const [pickerYear, setPickerYear] = useState(Number(currentMonthKey.slice(0, 4)))
   const [dashboard, setDashboard] = useState<AttendanceDashboardPayload | null>(
     null
   )
@@ -458,17 +474,18 @@ export function AttendanceDashboard() {
     }
   }
 
-  function updateSelectedMonth(date: Date) {
-    const nextMonth = format(date, "yyyy-MM")
+  function updateSelectedMonth(monthIndex: number, year: number) {
+    const nextDate = new Date(year, monthIndex, 1)
+    const nextMonth = format(nextDate, "yyyy-MM")
 
     setSelectedMonth(nextMonth)
-    setPickerMonth(date)
+    setPickerYear(year)
     setIsMonthPickerOpen(false)
   }
 
   function toggleMonthPicker() {
     if (!isMonthPickerOpen) {
-      setPickerMonth(monthDate)
+      setPickerYear(monthDate.getFullYear())
     }
 
     setIsMonthPickerOpen((current) => !current)
@@ -548,6 +565,9 @@ export function AttendanceDashboard() {
   }
 
   const monthDate = parse(`${selectedMonth}-01`, "yyyy-MM-dd", new Date())
+  const now = new Date()
+  const maxPickerYear = now.getFullYear()
+  const maxPickerMonthIndex = now.getMonth()
   const firstName =
     dashboard?.user.name.split(" ")[0] ?? session?.user.name.split(" ")[0] ?? "there"
   const setupRequired = dashboard?.today.setup_required ?? true
@@ -874,9 +894,7 @@ export function AttendanceDashboard() {
                       Set your before-lunch, lunch, and after-lunch durations
                     </h2>
                     <p className="mt-2 text-sm leading-6 text-slate-600">
-                      Use minutes. Set a slot to 0 if you do not use that break. Break
-                      durations are separate from the work schedule used for late and
-                      undertime.
+                      Use minutes for break durations. 
                     </p>
                   </div>
 
@@ -979,10 +997,6 @@ export function AttendanceDashboard() {
                 Track before-lunch, lunch, and after-lunch punches
               </h2>
             </div>
-            <p className="text-sm leading-6 text-slate-500">
-              Breaks are enforced in order. Excess minutes are calculated when you punch
-              back in.
-            </p>
           </div>
 
           <div className="mt-5 grid gap-4 lg:grid-cols-3">
@@ -1090,7 +1104,7 @@ export function AttendanceDashboard() {
               onClick={toggleMonthPicker}
               className="inline-flex w-fit items-center gap-2 rounded-full px-4 py-2 text-xl font-semibold text-violet-600 transition hover:bg-violet-50"
               aria-expanded={isMonthPickerOpen}
-              aria-label="Open calendar month picker"
+              aria-label="Open month and year picker"
             >
               <CalendarDays className="size-5" />
               <span>{format(monthDate, "MMMM yyyy")}</span>
@@ -1111,23 +1125,70 @@ export function AttendanceDashboard() {
             </Button>
 
             {isMonthPickerOpen ? (
-              <div className="absolute left-5 top-[calc(100%-0.5rem)] z-20 w-fit rounded-[1.5rem] border border-slate-200 bg-white p-2 shadow-[0_24px_60px_rgba(15,23,42,0.14)] sm:left-6">
-                <Calendar
-                  mode="single"
-                  month={pickerMonth}
-                  selected={pickerMonth}
-                  onSelect={(date) => {
-                    if (date) {
-                      updateSelectedMonth(date)
+              <div className="absolute left-5 top-[calc(100%-0.5rem)] z-20 w-[18rem] rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-[0_24px_60px_rgba(15,23,42,0.14)] sm:left-6">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="size-9 rounded-full border-slate-200"
+                    onClick={() =>
+                      setPickerYear((current) =>
+                        Math.max(monthPickerStartYear, current - 1)
+                      )
                     }
-                  }}
-                  onMonthChange={setPickerMonth}
-                  captionLayout="dropdown"
-                  startMonth={new Date(2020, 0)}
-                  endMonth={new Date()}
-                  disabled={{ after: new Date() }}
-                  className="rounded-[1.25rem] bg-white"
-                />
+                    disabled={pickerYear <= monthPickerStartYear}
+                    aria-label="Show previous year"
+                  >
+                    <ChevronLeft className="size-4" />
+                  </Button>
+                  <div className="text-sm font-semibold tracking-[0.16em] text-slate-500 uppercase">
+                    {pickerYear}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="size-9 rounded-full border-slate-200"
+                    onClick={() =>
+                      setPickerYear((current) => Math.min(maxPickerYear, current + 1))
+                    }
+                    disabled={pickerYear >= maxPickerYear}
+                    aria-label="Show next year"
+                  >
+                    <ChevronRight className="size-4" />
+                  </Button>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {monthPickerMonthLabels.map((label, monthIndex) => {
+                    const isDisabled =
+                      pickerYear === maxPickerYear && monthIndex > maxPickerMonthIndex
+                    const isSelected =
+                      pickerYear === monthDate.getFullYear() &&
+                      monthIndex === monthDate.getMonth()
+
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        className={`rounded-2xl border px-3 py-2 text-sm font-medium transition ${
+                          isSelected
+                            ? "border-violet-200 bg-violet-100 text-violet-700"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-violet-200 hover:bg-violet-50"
+                        } ${
+                          isDisabled
+                            ? "cursor-not-allowed opacity-40 hover:border-slate-200 hover:bg-white"
+                            : ""
+                        }`}
+                        onClick={() => updateSelectedMonth(monthIndex, pickerYear)}
+                        disabled={isDisabled}
+                        aria-pressed={isSelected}
+                      >
+                        {label}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             ) : null}
           </div>
@@ -1172,6 +1233,64 @@ export function AttendanceDashboard() {
                   {dashboard?.user.name ?? session?.user.name}
                 </h2>
               </div>
+              {/* <div className="rounded-[1.25rem] bg-slate-50 px-4 py-3 text-right">
+                <p className="text-sm text-slate-500">Current shift</p>
+                <p className="mt-1 text-sm font-medium text-slate-700">
+                  {dashboard?.today.time_in
+                    ? `${formatClockTime(dashboard.today.time_in)} to ${
+                        dashboard.today.time_out
+                          ? formatClockTime(dashboard.today.time_out)
+                          : "Open"
+                      }`
+                    : "No attendance recorded yet"}
+                </p>
+                <p className="mt-2 text-sm text-slate-500">Scheduled shift</p>
+                <p className="mt-1 text-sm font-medium text-slate-700">
+                  {dashboard?.settings.schedule_label
+                    ? `${formatTimeValue(dashboard.settings.shift_start_time) ?? "--:--"} to ${
+                        formatTimeValue(dashboard.settings.shift_end_time) ?? "--:--"
+                      }`
+                    : "Set work schedule"}
+                </p>
+                {dashboard ? (
+                  <div className="mt-3 flex flex-wrap justify-end gap-2">
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        dashboard.today.status === "absent"
+                          ? "bg-rose-100 text-rose-700"
+                          : dashboard.today.late_minutes > 0
+                          ? "bg-rose-100 text-rose-700"
+                          : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {dashboard.today.status === "absent"
+                        ? "Marked absent"
+                        : dashboard.today.time_in
+                        ? dashboard.today.late_minutes > 0
+                          ? `Late: ${dashboard.today.late_minutes} min`
+                          : "Late: 0 min"
+                        : "Awaiting clock in"}
+                    </span>
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        dashboard.today.status === "absent"
+                          ? "bg-slate-200 text-slate-500"
+                          : dashboard.today.undertime_minutes > 0
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {dashboard.today.status === "absent"
+                        ? "No clock out"
+                        : dashboard.today.time_out
+                        ? dashboard.today.undertime_minutes > 0
+                          ? `Undertime: ${dashboard.today.undertime_minutes} min`
+                          : "No undertime"
+                        : "Awaiting clock out"}
+                    </span>
+                  </div>
+                ) : null}
+              </div> */}
             </div>
 
             <div className="overflow-hidden rounded-[1.75rem] border border-slate-100">
@@ -1746,7 +1865,7 @@ function applyActionResultToDashboard(
     ...current,
     today: result.today,
     records,
-    summary: recalculateSummary(records, selectedMonth),
+    summary: recalculateSummary(records, selectedMonth, current.settings),
   }
 }
 
@@ -1768,14 +1887,11 @@ function mergeMonthlyRecord(
 
 function recalculateSummary(
   records: AttendanceRecord[],
-  selectedMonth: string
+  selectedMonth: string,
+  settings: AttendanceDashboardPayload["settings"]
 ): AttendanceSummary {
   const selectedMonthDate = parse(`${selectedMonth}-01`, "yyyy-MM-dd", new Date())
   const now = new Date()
-  const monthBoundary = isSameMonth(selectedMonthDate, now)
-    ? now
-    : endOfMonth(selectedMonthDate)
-
   const clockInMinutes = records
     .map((record) => toClockMinutes(record.time_in))
     .filter((value): value is number => value !== null)
@@ -1785,17 +1901,43 @@ function recalculateSummary(
   const workingMinutes = records
     .map((record) => record.working_minutes)
     .filter((minutes) => minutes > 0)
-  const attendanceDays = records.filter((record) => record.time_in !== null).length
 
   return {
     average_clock_in_minutes: averageMinutes(clockInMinutes),
     average_clock_out_minutes: averageMinutes(clockOutMinutes),
     average_working_minutes: averageMinutes(workingMinutes) ?? 0,
-    absent_days: Math.max(
-      0,
-      countExpectedWeekdays(selectedMonthDate, monthBoundary) - attendanceDays
-    ),
+    absent_days: countAbsentDays(records, settings, selectedMonthDate, now),
   }
+}
+
+function countAbsentDays(
+  records: AttendanceRecord[],
+  settings: AttendanceDashboardPayload["settings"],
+  selectedMonthDate: Date,
+  now: Date
+): number {
+  const attendedDates = new Set(
+    records.filter((record) => record.time_in !== null).map((record) => record.date)
+  )
+  let absentDays = 0
+  let cursor = selectedMonthDate
+  const monthEnd = endOfMonth(selectedMonthDate)
+
+  while (cursor <= monthEnd) {
+    const dayKey = format(cursor, "yyyy-MM-dd")
+
+    if (
+      !isWeekend(cursor) &&
+      shouldCountAbsenceForDate(cursor, settings, now) &&
+      !attendedDates.has(dayKey)
+    ) {
+      absentDays += 1
+    }
+
+    cursor = addDays(cursor, 1)
+  }
+
+  return Math.max(absentDays, 0)
 }
 
 function averageMinutes(values: number[]): number | null {

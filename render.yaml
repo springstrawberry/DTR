@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: dtr-backend
+    runtime: docker
+    plan: free
+    dockerfilePath: ./dtr-backend/Dockerfile
+    dockerContext: ./dtr-backend
+    rootDir: dtr-backend
+    healthCheckPath: /up
+    envVars:
+      - key: APP_NAME
+        value: DTR
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: APP_KEY
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: DB_CONNECTION
+        value: pgsql
+      - key: DB_URL
+        fromDatabase:
+          name: dtr-db
+          property: connectionString
+      - key: RUN_MIGRATIONS
+        value: "true"
+
+  - type: web
+    name: dtr-frontend
+    runtime: node
+    plan: free
+    rootDir: dtr-frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NEXT_PUBLIC_API_BASE_URL
+        fromService:
+          type: web
+          name: dtr-backend
+          envVarKey: APP_URL
+
+databases:
+  - name: dtr-db
+    plan: free

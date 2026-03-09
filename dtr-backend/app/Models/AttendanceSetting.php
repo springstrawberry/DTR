@@ -12,6 +12,8 @@ use InvalidArgumentException;
 
 class AttendanceSetting extends Model
 {
+    public const ABSENCE_THRESHOLD_MINUTES = 60;
+
     public const BREAK_TYPES = [
         'morning_break' => [
             'label' => 'Before lunch break',
@@ -171,6 +173,17 @@ class AttendanceSetting extends Model
         }
 
         return "{$start} - {$end}";
+    }
+
+    public function absenceCutoffForDate(CarbonInterface $date): ?CarbonImmutable
+    {
+        $start = $this->scheduleStartForDate($date);
+
+        if ($start === null) {
+            return null;
+        }
+
+        return $start->addMinutes(self::ABSENCE_THRESHOLD_MINUTES);
     }
 
     public function isOvernightSchedule(): bool
