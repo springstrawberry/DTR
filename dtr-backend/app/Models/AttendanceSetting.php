@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use Carbon\CarbonImmutable;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use InvalidArgumentException;
@@ -31,6 +33,8 @@ class AttendanceSetting extends Model
         'morning_break_minutes',
         'lunch_break_minutes',
         'afternoon_break_minutes',
+        'shift_start_time',
+        'shift_end_time',
     ];
 
     /**
@@ -90,6 +94,77 @@ class AttendanceSetting extends Model
         return $types;
     }
 
+    public function hasScheduleSetup(): bool
+    {
+        return is_string($this->shift_start_time)
+            && trim($this->shift_start_time) !== ''
+            && is_string($this->shift_end_time)
+            && trim($this->shift_end_time) !== '';
+    }
+
+    public function formattedShiftStartTime(): ?string
+    {
+        return $this->formatTimeValue($this->shift_start_time);
+    }
+
+    public function formattedShiftEndTime(): ?string
+    {
+        return $this->formatTimeValue($this->shift_end_time);
+    }
+
+    public function scheduleStartForDate(CarbonInterface $date): ?CarbonImmutable
+    {
+        $value = $this->formattedShiftStartTime();
+
+        if ($value === null) {
+            return null;
+        }
+
+        return CarbonImmutable::parse($date->toDateString().' '.$value);
+    }
+
+    public function scheduleEndForDate(CarbonInterface $date): ?CarbonImmutable
+    {
+        $value = $this->formattedShiftEndTime();
+
+        if ($value === null) {
+            return null;
+        }
+
+        $start = $this->scheduleStartForDate($date);
+        $end = CarbonImmutable::parse($date->toDateString().' '.$value);
+
+        if ($start !== null && $end->lessThanOrEqualTo($start)) {
+            return $end->addDay();
+        }
+
+        return $end;
+    }
+
+    public function scheduleLabel(): ?string
+    {
+        $start = $this->formattedShiftStartTime();
+        $end = $this->formattedShiftEndTime();
+
+        if ($start === null || $end === null) {
+            return null;
+        }
+
+        return "{$start} - {$end}";
+    }
+
+    public function isOvernightSchedule(): bool
+    {
+        $start = $this->formattedShiftStartTime();
+        $end = $this->formattedShiftEndTime();
+
+        if ($start === null || $end === null) {
+            return false;
+        }
+
+        return $end <= $start;
+    }
+
     public static function labelFor(string $type): string
     {
         return self::metaFor($type)['label'];
@@ -110,5 +185,14 @@ class AttendanceSetting extends Model
         }
 
         return self::BREAK_TYPES[$type];
+    }
+
+    private function formatTimeValue(mixed $value): ?string
+    {
+        if (! is_string($value) || trim($value) === '') {
+            return null;
+        }
+
+        return substr($value, 0, 5);
     }
 }

@@ -96,6 +96,18 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => env('DB_SSLMODE', 'prefer'),
+            'options' => extension_loaded('pdo_pgsql')
+                ? array_replace(
+                    [
+                        \PDO::ATTR_EMULATE_PREPARES => env('DB_EMULATE_PREPARES', true),
+                    ],
+                    defined('PDO::PGSQL_ATTR_DISABLE_PREPARES')
+                        ? [
+                            \PDO::PGSQL_ATTR_DISABLE_PREPARES => env('DB_DISABLE_PREPARES', true),
+                        ]
+                        : []
+                )
+                : [],
         ],
 
         'sqlsrv' => [

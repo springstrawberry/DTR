@@ -17,6 +17,8 @@ use LogicException;
 
 class AttendanceController extends Controller
 {
+    private const LATE_THRESHOLD_MINUTES = 5;
+
     private const ACTIONS = [
         'time_in',
         'morning_break_out',
@@ -55,18 +57,25 @@ class AttendanceController extends Controller
             ->orderByDesc('date')
             ->get();
 
-        $todayLog = $user->dtrLogs()
-            ->with('breaks')
-            ->whereDate('date', $today->toDateString())
-            ->first();
-
         $setting = $user->attendanceSetting;
+        $attendanceDate = $this->resolveAttendanceDateForMoment($user, $setting, $today);
+
+        $todayLog = $monthLogs->first(
+            static fn (DTRLog $log): bool => $log->date?->isSameDay($attendanceDate) ?? false
+        );
+
+        if ($todayLog === null) {
+            $todayLog = $user->dtrLogs()
+                ->with('breaks')
+                ->whereDate('date', $attendanceDate->toDateString())
+                ->first();
+        }
 
         return response()->json([
             'user' => $this->authService->serializeUser($user),
             'month' => $selectedMonth->format('Y-m'),
             'settings' => $this->serializeSettings($setting),
-            'today' => $this->serializeToday($todayLog, $setting, $today),
+            'today' => $this->serializeToday($todayLog, $setting, $attendanceDate),
             'summary' => $this->serializeSummary($monthLogs, $selectedMonth, $today),
             'records' => $monthLogs
                 ->map(fn (DTRLog $log): array => $this->serializeRecord($log, $setting))
@@ -77,22 +86,39 @@ class AttendanceController extends Controller
     public function updateSettings(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'morning_break_minutes' => ['required', 'integer', 'min:0', 'max:240'],
-            'lunch_break_minutes' => ['required', 'integer', 'min:0', 'max:240'],
-            'afternoon_break_minutes' => ['required', 'integer', 'min:0', 'max:240'],
+            'morning_break_minutes' => ['sometimes', 'integer', 'min:0', 'max:240'],
+            'lunch_break_minutes' => ['sometimes', 'integer', 'min:0', 'max:240'],
+            'afternoon_break_minutes' => ['sometimes', 'integer', 'min:0', 'max:240'],
+            'shift_start_time' => ['sometimes', 'date_format:H:i'],
+            'shift_end_time' => ['sometimes', 'date_format:H:i'],
         ]);
+
+        if ($validated === []) {
+            throw ValidationException::withMessages([
+                'settings' => ['Provide at least one attendance setting to update.'],
+            ]);
+        }
 
         $user = $request->user();
 
-        $setting = AttendanceSetting::query()->updateOrCreate(
-            ['user_id' => $user->id],
-            $validated,
-        );
+        $setting = AttendanceSetting::query()->firstOrNew([
+            'user_id' => $user->id,
+        ]);
+
+        $setting->fill($validated);
+
+        if (($setting->formattedShiftStartTime() === null) xor ($setting->formattedShiftEndTime() === null)) {
+            throw ValidationException::withMessages([
+                'shift_start_time' => ['Both schedule start and schedule end must be provided together.'],
+            ]);
+        }
+
+        $setting->save();
 
         $user->setRelation('attendanceSetting', $setting);
 
         return response()->json([
-            'message' => 'Break setup saved.',
+            'message' => 'Attendance settings saved.',
             'settings' => $this->serializeSettings($setting->fresh()),
         ]);
     }
@@ -138,10 +164,16 @@ class AttendanceController extends Controller
 
         $todayLog = $todayLog->fresh()->load('breaks');
 
+        $attendanceDate = $this->resolveAttendanceDateForMoment(
+            $user,
+            $user->attendanceSetting,
+            CarbonImmutable::now()
+        );
+
         return response()->json([
             'message' => $this->actionMessage($action),
             'record' => $this->serializeRecord($todayLog, $user->attendanceSetting),
-            'today' => $this->serializeToday($todayLog, $user->attendanceSetting, CarbonImmutable::now()),
+            'today' => $this->serializeToday($todayLog, $user->attendanceSetting, $attendanceDate),
         ]);
     }
 
@@ -155,18 +187,28 @@ class AttendanceController extends Controller
         if ($setting === null) {
             return [
                 'configured' => false,
+                'breaks_configured' => false,
+                'schedule_configured' => false,
                 'morning_break_minutes' => 0,
                 'lunch_break_minutes' => 0,
                 'afternoon_break_minutes' => 0,
+                'shift_start_time' => null,
+                'shift_end_time' => null,
+                'schedule_label' => null,
                 'breaks' => $this->defaultBreakDefinitions(),
             ];
         }
 
         return [
-            'configured' => true,
+            'configured' => $setting->hasScheduleSetup(),
+            'breaks_configured' => true,
+            'schedule_configured' => $setting->hasScheduleSetup(),
             'morning_break_minutes' => (int) $setting->morning_break_minutes,
             'lunch_break_minutes' => (int) $setting->lunch_break_minutes,
             'afternoon_break_minutes' => (int) $setting->afternoon_break_minutes,
+            'shift_start_time' => $setting->formattedShiftStartTime(),
+            'shift_end_time' => $setting->formattedShiftEndTime(),
+            'schedule_label' => $setting->scheduleLabel(),
             'breaks' => array_map(
                 static fn (array $definition): array => [
                     'type' => $definition['type'],
@@ -216,14 +258,25 @@ class AttendanceController extends Controller
             $status = 'in_progress';
         }
 
+        $scheduleConfigured = $setting !== null && $setting->hasScheduleSetup();
+        $lateMinutes = $log !== null ? $this->calculateLateMinutes($log, $setting) : 0;
+        $undertimeMinutes = $log !== null ? $this->calculateUndertimeMinutes($log, $setting) : 0;
+
         return [
             'date' => $today->toDateString(),
             'status' => $status,
-            'setup_required' => $setting === null,
+            'setup_required' => ! $scheduleConfigured,
             'time_in' => $log?->time_in?->toIso8601String(),
             'time_out' => $log?->time_out?->toIso8601String(),
-            'can_clock_in' => $setting !== null && ($log === null || $log->time_in === null),
+            'scheduled_start_time' => $setting?->formattedShiftStartTime(),
+            'scheduled_end_time' => $setting?->formattedShiftEndTime(),
+            'late_minutes' => $lateMinutes,
+            'undertime_minutes' => $undertimeMinutes,
+            'is_late' => $lateMinutes > 0,
+            'is_undertime' => $undertimeMinutes > 0,
+            'can_clock_in' => $scheduleConfigured && ($log === null || $log->time_in === null),
             'can_clock_out' => $setting !== null
+                && $setting->hasScheduleSetup()
                 && $log !== null
                 && $log->time_in !== null
                 && $log->time_out === null
@@ -351,7 +404,11 @@ class AttendanceController extends Controller
             'date' => $log->date?->toDateString(),
             'time_in' => $log->time_in?->toIso8601String(),
             'time_out' => $log->time_out?->toIso8601String(),
+            'scheduled_start_time' => $setting?->formattedShiftStartTime(),
+            'scheduled_end_time' => $setting?->formattedShiftEndTime(),
             'working_minutes' => $this->calculateWorkedMinutes($log),
+            'late_minutes' => $this->calculateLateMinutes($log, $setting),
+            'undertime_minutes' => $this->calculateUndertimeMinutes($log, $setting),
             'break_exceeded_minutes' => array_sum(
                 array_map(static fn (array $break): int => $break['exceeded_minutes'], $breaks)
             ),
@@ -418,6 +475,41 @@ class AttendanceController extends Controller
         return (int) round($this->dtrLogService->calculateTotalHours([$log]) * 60);
     }
 
+    private function calculateLateMinutes(DTRLog $log, ?AttendanceSetting $setting): int
+    {
+        if ($setting === null || ! $setting->hasScheduleSetup() || $log->time_in === null || $log->date === null) {
+            return 0;
+        }
+
+        $scheduledStart = $setting->scheduleStartForDate($log->date);
+
+        if ($scheduledStart === null) {
+            return 0;
+        }
+
+        $lateMinutes = max(
+            0,
+            $scheduledStart->diffInMinutes($log->time_in, false)
+        );
+
+        return $lateMinutes >= self::LATE_THRESHOLD_MINUTES ? $lateMinutes : 0;
+    }
+
+    private function calculateUndertimeMinutes(DTRLog $log, ?AttendanceSetting $setting): int
+    {
+        if ($setting === null || ! $setting->hasScheduleSetup() || $log->time_out === null || $log->date === null) {
+            return 0;
+        }
+
+        $scheduledEnd = $setting->scheduleEndForDate($log->date);
+
+        if ($scheduledEnd === null) {
+            return 0;
+        }
+
+        return max(0, $log->time_out->diffInMinutes($scheduledEnd, false));
+    }
+
     private function averageMinutes(Collection $values): ?int
     {
         if ($values->isEmpty()) {
@@ -453,6 +545,35 @@ class AttendanceController extends Controller
         }
 
         return $count;
+    }
+
+    private function resolveAttendanceDateForMoment(
+        mixed $user,
+        ?AttendanceSetting $setting,
+        CarbonImmutable $moment,
+    ): CarbonImmutable {
+        $baseDate = $moment->startOfDay();
+
+        if ($setting === null || ! $setting->isOvernightSchedule()) {
+            return $baseDate;
+        }
+
+        $previousDate = $baseDate->subDay();
+        $previousLog = $user->dtrLogs()
+            ->whereDate('date', $previousDate->toDateString())
+            ->first();
+
+        if ($previousLog !== null && $previousLog->time_in !== null && $previousLog->time_out === null) {
+            return $previousDate;
+        }
+
+        $shiftEnd = $setting->formattedShiftEndTime();
+
+        if ($shiftEnd !== null && $moment->format('H:i') <= $shiftEnd) {
+            return $previousDate;
+        }
+
+        return $baseDate;
     }
 
     private function actionMessage(string $action): string

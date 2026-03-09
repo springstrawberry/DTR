@@ -15,10 +15,11 @@ class DTRLogService
 {
     public function timeIn(User $user, mixed $recordedAt = null): DTRLog
     {
-        $this->getAttendanceSetting($user);
+        $setting = $this->getAttendanceSetting($user);
+        $this->ensureScheduleIsConfigured($setting);
 
         $recordedAt = $this->resolveTimestamp($recordedAt);
-        $log = $this->getOrCreateDailyLog($user, $recordedAt);
+        $log = $this->getOrCreateDailyLog($user, $setting, $recordedAt);
 
         $this->ensureFieldIsEmpty($log, 'time_in', 'Time in has already been recorded for this date.');
 
@@ -32,7 +33,7 @@ class DTRLogService
     {
         $setting = $this->getAttendanceSetting($user);
         $recordedAt = $this->resolveTimestamp($recordedAt);
-        $log = $this->getExistingDailyLog($user, $recordedAt, 'Cannot record a break before time in.')
+        $log = $this->getExistingDailyLog($user, $setting, $recordedAt, 'Cannot record a break before time in.')
             ->loadMissing('breaks');
 
         $label = AttendanceSetting::labelFor($breakType);
@@ -63,7 +64,7 @@ class DTRLogService
     {
         $setting = $this->getAttendanceSetting($user);
         $recordedAt = $this->resolveTimestamp($recordedAt);
-        $log = $this->getExistingDailyLog($user, $recordedAt, 'Cannot end a break before time in.')
+        $log = $this->getExistingDailyLog($user, $setting, $recordedAt, 'Cannot end a break before time in.')
             ->loadMissing('breaks');
 
         $label = AttendanceSetting::labelFor($breakType);
@@ -105,7 +106,7 @@ class DTRLogService
         $setting = $this->getAttendanceSetting($user);
 
         $recordedAt = $this->resolveTimestamp($recordedAt);
-        $log = $this->getExistingDailyLog($user, $recordedAt, 'Cannot record time out before time in.')
+        $log = $this->getExistingDailyLog($user, $setting, $recordedAt, 'Cannot record time out before time in.')
             ->loadMissing('breaks');
 
         $this->ensureFieldIsPresent($log, 'time_in', 'Cannot record time out before time in.');
@@ -236,6 +237,15 @@ class DTRLogService
         }
     }
 
+    private function ensureScheduleIsConfigured(AttendanceSetting $setting): void
+    {
+        if ($setting->hasScheduleSetup()) {
+            return;
+        }
+
+        throw new LogicException('Configure your work schedule before recording attendance.');
+    }
+
     private function ensureNoActiveBreak(DTRLog $log): void
     {
         $activeBreak = $this->getActiveBreak($log);
@@ -313,7 +323,7 @@ class DTRLogService
             : $user->attendanceSetting()->first();
 
         if ($setting === null) {
-            throw new LogicException('Configure your break setup before recording attendance.');
+            throw new LogicException('Configure your attendance setup before recording attendance.');
         }
 
         return $setting;
@@ -329,12 +339,13 @@ class DTRLogService
         return $this->asCarbon($value ?? Carbon::now());
     }
 
-    private function getOrCreateDailyLog(User $user, CarbonInterface $recordedAt): DTRLog
+    private function getOrCreateDailyLog(User $user, AttendanceSetting $setting, CarbonInterface $recordedAt): DTRLog
     {
         $this->ensureUserExists($user);
+        $logDate = $this->resolveLogDate($user, $setting, $recordedAt);
 
         $log = $user->dtrLogs()
-            ->whereDate('date', $recordedAt->toDateString())
+            ->whereDate('date', $logDate->toDateString())
             ->first();
 
         if ($log !== null) {
@@ -342,16 +353,22 @@ class DTRLogService
         }
 
         return $user->dtrLogs()->make([
-            'date' => Carbon::parse($recordedAt->toDateString())->startOfDay(),
+            'date' => Carbon::parse($logDate->toDateString())->startOfDay(),
         ]);
     }
 
-    private function getExistingDailyLog(User $user, CarbonInterface $recordedAt, string $message): DTRLog
+    private function getExistingDailyLog(
+        User $user,
+        AttendanceSetting $setting,
+        CarbonInterface $recordedAt,
+        string $message,
+    ): DTRLog
     {
         $this->ensureUserExists($user);
+        $logDate = $this->resolveLogDate($user, $setting, $recordedAt);
 
         $log = $user->dtrLogs()
-            ->whereDate('date', $recordedAt->toDateString())
+            ->whereDate('date', $logDate->toDateString())
             ->first();
 
         if ($log === null) {
@@ -387,5 +404,34 @@ class DTRLogService
         if ($this->asCarbon($previous)->greaterThan($current)) {
             throw new LogicException($message);
         }
+    }
+
+    private function resolveLogDate(
+        User $user,
+        AttendanceSetting $setting,
+        CarbonInterface $recordedAt,
+    ): CarbonInterface {
+        $baseDate = Carbon::parse($recordedAt->toDateString())->startOfDay();
+
+        if (! $setting->isOvernightSchedule()) {
+            return $baseDate;
+        }
+
+        $previousDate = $baseDate->copy()->subDay();
+        $previousLog = $user->dtrLogs()
+            ->whereDate('date', $previousDate->toDateString())
+            ->first();
+
+        if ($previousLog !== null && $previousLog->time_in !== null && $previousLog->time_out === null) {
+            return $previousDate;
+        }
+
+        $shiftEnd = $setting->formattedShiftEndTime();
+
+        if ($shiftEnd !== null && $recordedAt->format('H:i') <= $shiftEnd) {
+            return $previousDate;
+        }
+
+        return $baseDate;
     }
 }
