@@ -12,6 +12,18 @@ class RegisterRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        $this->merge([
+            'name' => is_string($this->input('name'))
+                ? trim($this->input('name'))
+                : $this->input('name'),
+            'email' => is_string($this->input('email'))
+                ? mb_strtolower(trim($this->input('email')))
+                : $this->input('email'),
+        ]);
+    }
+
     /**
      * Get the validation rules that apply to the request.
      *

@@ -319,9 +319,11 @@ class DTRLogService
     {
         $this->ensureUserExists($user);
 
-        $setting = $user->relationLoaded('attendanceSetting')
-            ? $user->getRelation('attendanceSetting')
-            : $user->attendanceSetting()->first();
+        $settings = $user->relationLoaded('attendanceSettings')
+            ? $user->getRelation('attendanceSettings')
+            : $user->attendanceSettings()->get();
+        $setting = $settings->firstWhere(AttendanceSetting::ACTIVE_STATUS_COLUMN, true)
+            ?? $settings->first();
 
         if ($setting === null) {
             throw new LogicException('Configure your attendance setup before recording attendance.');

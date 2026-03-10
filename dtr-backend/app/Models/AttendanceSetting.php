@@ -13,6 +13,7 @@ use InvalidArgumentException;
 class AttendanceSetting extends Model
 {
     public const ABSENCE_THRESHOLD_MINUTES = 60;
+    public const ACTIVE_STATUS_COLUMN = 'attend_status';
 
     public const BREAK_TYPES = [
         'morning_break' => [
@@ -39,6 +40,7 @@ class AttendanceSetting extends Model
         'afternoon_break_minutes',
         'shift_start_time',
         'shift_end_time',
+        'attend_status',
         'status',
     ];
 
@@ -53,7 +55,7 @@ class AttendanceSetting extends Model
             'morning_break_minutes' => 'integer',
             'lunch_break_minutes' => 'integer',
             'afternoon_break_minutes' => 'integer',
-            'status' => 'boolean',
+            self::ACTIVE_STATUS_COLUMN => 'boolean',
         ];
     }
 
@@ -67,7 +69,7 @@ class AttendanceSetting extends Model
      */
     public function scopeActive(Builder $query): Builder
     {
-        return $query->whereRaw('CAST("status" AS boolean) = true');
+        return $query->where(self::ACTIVE_STATUS_COLUMN, true);
     }
 
     /**
@@ -75,7 +77,17 @@ class AttendanceSetting extends Model
      */
     public function scopeInactive(Builder $query): Builder
     {
-        return $query->whereRaw('CAST("status" AS boolean) = false');
+        return $query->where(self::ACTIVE_STATUS_COLUMN, false);
+    }
+
+    public function getStatusAttribute(): bool
+    {
+        return (bool) $this->getAttributeValue(self::ACTIVE_STATUS_COLUMN);
+    }
+
+    public function setStatusAttribute(mixed $value): void
+    {
+        $this->attributes[self::ACTIVE_STATUS_COLUMN] = $value;
     }
 
     public function breakDefinitions(): array

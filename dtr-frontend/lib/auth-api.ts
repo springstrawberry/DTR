@@ -62,16 +62,16 @@ function readErrorMessage(payload: unknown, status: number): string {
       errors?: Record<string, unknown>
     }
 
-    if (typeof body.message === "string" && body.message.trim() !== "") {
-      return body.message
-    }
-
     if (body.errors && typeof body.errors === "object") {
       for (const value of Object.values(body.errors)) {
         if (Array.isArray(value) && typeof value[0] === "string") {
           return value[0]
         }
       }
+    }
+
+    if (typeof body.message === "string" && body.message.trim() !== "") {
+      return body.message
     }
   }
 
