@@ -9,7 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('dtrlogs', function (Blueprint $table) {
-            $table->foreignId('attendance_setting_id')
+            $table->foreignId('attendance_id')
                 ->nullable()
                 ->after('user_id')
                 ->constrained('attendance_settings')
@@ -20,8 +20,8 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('dtrlogs', function (Blueprint $table) {
-            $table->dropForeignKeyIfExists(['attendance_setting_id']);
-            $table->dropColumn('attendance_setting_id');
+            $table->dropForeignKeyIfExists(['attendance_id']);
+            $table->dropColumn('attendance_id');
         });
     }
 };

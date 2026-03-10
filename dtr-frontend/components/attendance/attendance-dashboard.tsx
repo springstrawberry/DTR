@@ -1375,7 +1375,7 @@ export function AttendanceDashboard() {
                         <TableCell className="px-4 py-3 text-slate-600">
                           <div className="flex flex-col gap-1">
                             <span className="text-xs font-semibold text-slate-500">
-                              Shift ID: {record.attendance_setting_id ?? "--"}
+                              Shift ID: {record.attendance_id ?? "--"}
                             </span>
                             {record.scheduled_start_time && record.scheduled_end_time
                               ? `${formatTimeValue(record.scheduled_start_time) ?? "--:--"} - ${

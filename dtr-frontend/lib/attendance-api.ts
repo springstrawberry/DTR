@@ -83,7 +83,7 @@ export type AttendanceSummary = {
 
 export type AttendanceRecord = {
   id: number
-  attendance_setting_id: number | null
+  attendance_id: number | null
   date: string
   time_in: string | null
   time_out: string | null

@@ -519,7 +519,7 @@ class AttendanceController extends Controller
 
         return [
             'id' => $log->id,
-            'attendance_setting_id' => $setting?->id,
+            'attendance_id' => $log->attendance_id,
             'date' => $log->date?->toDateString(),
             'time_in' => $log->time_in?->toIso8601String(),
             'time_out' => $log->time_out?->toIso8601String(),

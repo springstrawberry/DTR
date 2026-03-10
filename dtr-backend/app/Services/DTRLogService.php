@@ -356,7 +356,7 @@ class DTRLogService
 
         return $user->dtrLogs()->make([
             'date' => Carbon::parse($logDate->toDateString())->startOfDay(),
-            'attendance_setting_id' => $setting->id,
+            'attendance_id' => $setting->id,
         ]);
     }
 

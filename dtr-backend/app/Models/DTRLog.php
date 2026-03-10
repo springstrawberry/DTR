@@ -42,7 +42,7 @@ class DTRLog extends Model
 
     public function attendanceSetting(): BelongsTo
     {
-        return $this->belongsTo(AttendanceSetting::class);
+        return $this->belongsTo(AttendanceSetting::class, 'attendance_id');
     }
 
     public function breaks(): HasMany
