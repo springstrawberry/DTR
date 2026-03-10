@@ -85,7 +85,7 @@ class AttendanceController extends Controller
             'user' => $this->authService->serializeUser($user),
             'month' => $selectedMonth->format('Y-m'),
             'settings' => $this->serializeSettings($setting),
-            'active_setting' => $this->serializeAttendanceSetting($setting),
+            'active_setting' => $setting ? $this->serializeAttendanceSetting($setting) : null,
             'all_settings' => $user->attendanceSettings->map(fn ($s) => $this->serializeAttendanceSetting($s))->values(),
             'today' => $this->serializeToday($todayLog, $setting, $attendanceDate, $today),
             'summary' => $this->serializeSummary($monthLogs, $setting, $selectedMonth, $today),
@@ -146,10 +146,10 @@ class AttendanceController extends Controller
         AttendanceSetting::query()
             ->where('user_id', $user->id)
             ->where('id', '!=', $settingId)
-            ->update(['status' => DB::raw('false')]);
+            ->update([AttendanceSetting::ACTIVE_STATUS_COLUMN => DB::raw('false')]);
 
         // Activate the selected setting
-        $setting->update(['status' => DB::raw('true')]);
+        $setting->update([AttendanceSetting::ACTIVE_STATUS_COLUMN => DB::raw('true')]);
 
         $user->load('attendanceSettings');
 

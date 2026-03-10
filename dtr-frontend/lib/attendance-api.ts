@@ -11,8 +11,8 @@ export type AttendanceSetting = {
   lunch_break_minutes: number
   afternoon_break_minutes: number
   status: boolean
-  shift_start_time: Date | null
-  shift_end_time: Date | null
+  shift_start_time: string | null
+  shift_end_time: string | null
 }
 
 export type AttendanceAction =

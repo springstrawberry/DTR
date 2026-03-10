@@ -1888,12 +1888,70 @@ function countAbsentDays(
   return Math.max(absentDays, 0)
 }
 
+function shouldCountAbsenceForDate(
+  date: Date,
+  settings: AttendanceDashboardPayload["settings"],
+  now: Date
+): boolean {
+  if (isWeekend(date)) {
+    return false
+  }
+
+  if (!settings.schedule_configured) {
+    return format(date, "yyyy-MM-dd") < format(now, "yyyy-MM-dd")
+  }
+
+  const shiftStartMinutes = toTimeValueMinutes(settings.shift_start_time)
+  if (shiftStartMinutes === null) {
+    return false
+  }
+
+  const cutoff = new Date(date)
+  const cutoffMinutes = shiftStartMinutes + ABSENCE_THRESHOLD_MINUTES
+
+  cutoff.setHours(Math.floor(cutoffMinutes / 60), cutoffMinutes % 60, 0, 0)
+
+  return now >= cutoff
+}
+
 function averageMinutes(values: number[]): number | null {
   if (values.length === 0) {
     return null
   }
 
   return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)
+}
+
+function toTimeValueMinutes(value: string | null): number | null {
+  if (!value || typeof value !== "string") {
+    return null
+  }
+
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  const parts = trimmed.split(":")
+  if (parts.length < 2) {
+    return null
+  }
+
+  const hours = Number.parseInt(parts[0], 10)
+  const minutes = Number.parseInt(parts[1], 10)
+
+  if (
+    Number.isNaN(hours) ||
+    Number.isNaN(minutes) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return null
+  }
+
+  return hours * 60 + minutes
 }
 
 function toClockMinutes(value: string | null): number | null {
