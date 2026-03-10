@@ -3,8 +3,9 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "build": "vite build",
-        "dev": "vite"
+        "dev": "cross-env NODE_OPTIONS=\"--max-old-space-size=2048\" next dev -- --turbo=false",
+        "start": "next start",
+        "build": "vite build"
     },
     "devDependencies": {
         "@tailwindcss/vite": "^4.0.0",
