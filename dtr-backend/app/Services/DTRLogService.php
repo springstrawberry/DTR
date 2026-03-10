@@ -20,7 +20,6 @@ class DTRLogService
 
         $recordedAt = $this->resolveTimestamp($recordedAt);
         $log = $this->getOrCreateDailyLog($user, $setting, $recordedAt);
-        $this->ensureClockInBeforeAbsenceCutoff($setting, $recordedAt, $log);
 
         $this->ensureFieldIsEmpty($log, 'time_in', 'Time in has already been recorded for this date.');
 
@@ -406,22 +405,6 @@ class DTRLogService
     {
         if ($this->asCarbon($previous)->greaterThan($current)) {
             throw new LogicException($message);
-        }
-    }
-
-    private function ensureClockInBeforeAbsenceCutoff(
-        AttendanceSetting $setting,
-        CarbonInterface $recordedAt,
-        DTRLog $log,
-    ): void {
-        if ($log->date === null || Carbon::parse($log->date->toDateString())->isWeekend()) {
-            return;
-        }
-
-        $cutoff = $setting->absenceCutoffForDate($log->date);
-
-        if ($cutoff !== null && $recordedAt->greaterThanOrEqualTo($cutoff)) {
-            throw new LogicException('You are already marked absent for this shift.');
         }
     }
 

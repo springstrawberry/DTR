@@ -113,9 +113,14 @@ class AttendanceController extends Controller
 
         $user = $request->user();
 
-        $setting = AttendanceSetting::query()->firstOrNew([
-            'user_id' => $user->id,
-        ]);
+        $setting = $user->attendanceSettings()
+            ->active()
+            ->first()
+            ?? $user->attendanceSettings()->first()
+            ?? new AttendanceSetting([
+                'user_id' => $user->id,
+                AttendanceSetting::ACTIVE_STATUS_COLUMN => true,
+            ]);
 
         $setting->fill($validated);
 
@@ -321,6 +326,12 @@ class AttendanceController extends Controller
         $scheduleConfigured = $setting !== null && $setting->hasScheduleSetup();
         $lateMinutes = $log !== null ? $this->calculateLateMinutes($log, $setting) : 0;
         $undertimeMinutes = $log !== null ? $this->calculateUndertimeMinutes($log, $setting) : 0;
+        $canClockIn = $scheduleConfigured
+            && ($log === null || $log->time_in === null);
+
+        if ($status === 'absent' && $canClockIn) {
+            $status = 'not_started';
+        }
 
         return [
             'date' => $attendanceDate->toDateString(),
@@ -334,9 +345,7 @@ class AttendanceController extends Controller
             'undertime_minutes' => $undertimeMinutes,
             'is_late' => $lateMinutes > 0,
             'is_undertime' => $undertimeMinutes > 0,
-            'can_clock_in' => $scheduleConfigured
-                && ! $isAbsent
-                && ($log === null || $log->time_in === null),
+            'can_clock_in' => $canClockIn,
             'can_clock_out' => $setting !== null
                 && $setting->hasScheduleSetup()
                 && $log !== null

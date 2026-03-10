@@ -7,7 +7,6 @@ use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 class AttendanceSetting extends Model
@@ -69,7 +68,7 @@ class AttendanceSetting extends Model
      */
     public function scopeActive(Builder $query): Builder
     {
-        return $query->where(self::ACTIVE_STATUS_COLUMN, true);
+        return $this->applyActiveStatusConstraint($query, true);
     }
 
     /**
@@ -77,7 +76,7 @@ class AttendanceSetting extends Model
      */
     public function scopeInactive(Builder $query): Builder
     {
-        return $query->where(self::ACTIVE_STATUS_COLUMN, false);
+        return $this->applyActiveStatusConstraint($query, false);
     }
 
     public function getStatusAttribute(): bool
@@ -239,5 +238,16 @@ class AttendanceSetting extends Model
         }
 
         return substr($value, 0, 5);
+    }
+
+    private function applyActiveStatusConstraint(Builder $query, bool $active): Builder
+    {
+        if ($this->getConnection()->getDriverName() === 'pgsql') {
+            $column = $this->qualifyColumn(self::ACTIVE_STATUS_COLUMN);
+
+            return $query->whereRaw($column.' is '.($active ? 'true' : 'false'));
+        }
+
+        return $query->where(self::ACTIVE_STATUS_COLUMN, $active);
     }
 }

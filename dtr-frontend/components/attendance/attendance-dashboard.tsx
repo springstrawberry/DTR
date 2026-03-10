@@ -748,7 +748,7 @@ export function AttendanceDashboard() {
                           const bTime = b.shift_start_time ?? ""
                           return aTime.localeCompare(bTime)
                         })
-                        .map((setting, index) => {
+                        .map((setting) => {
                         const startLabel =
                           formatTimeValue(setting.shift_start_time) ?? "--:--"
                         const endLabel =
@@ -1964,21 +1964,3 @@ function toClockMinutes(value: string | null): number | null {
   return date.getHours() * 60 + date.getMinutes()
 }
 
-function countExpectedWeekdays(monthStart: Date, monthEnd: Date): number {
-  if (monthStart > monthEnd) {
-    return 0
-  }
-
-  let count = 0
-  let cursor = monthStart
-
-  while (cursor <= monthEnd) {
-    if (!isWeekend(cursor)) {
-      count += 1
-    }
-
-    cursor = addDays(cursor, 1)
-  }
-
-  return count
-}
