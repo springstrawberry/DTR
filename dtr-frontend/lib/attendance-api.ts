@@ -83,6 +83,7 @@ export type AttendanceSummary = {
 
 export type AttendanceRecord = {
   id: number
+  attendance_setting_id: number | null
   date: string
   time_in: string | null
   time_out: string | null
@@ -206,6 +207,33 @@ export async function updateAttendanceSettings(
 ): Promise<UpdateAttendanceSettingsPayload> {
   return apiRequest<UpdateAttendanceSettingsPayload>(
     "/api/attendance/settings",
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    }
+  )
+}
+
+type CreateAttendanceSettingInput = {
+  shift_start_time: string
+  shift_end_time: string
+  morning_break_minutes?: number
+  lunch_break_minutes?: number
+  afternoon_break_minutes?: number
+}
+
+type CreateAttendanceSettingPayload = {
+  message: string
+  all_settings: AttendanceSetting[]
+}
+
+export async function createAttendanceSetting(
+  token: string,
+  input: CreateAttendanceSettingInput
+): Promise<CreateAttendanceSettingPayload> {
+  return apiRequest<CreateAttendanceSettingPayload>(
+    "/api/attendance/settings/create",
     token,
     {
       method: "POST",

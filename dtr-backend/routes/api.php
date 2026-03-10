@@ -16,7 +16,8 @@ Route::prefix('auth')->group(function (): void {
 
 Route::middleware('api.token')->prefix('attendance')->group(function (): void {
     Route::get('/', [AttendanceController::class, 'index']);
+    Route::post('/settings/create', [AttendanceController::class, 'createSettings']);
+    Route::post('/settings/{setting}/switch', [AttendanceController::class, 'switchAttendanceSetting']);
     Route::match(['post', 'put'], '/settings', [AttendanceController::class, 'updateSettings']);
     Route::post('/actions/{action}', [AttendanceController::class, 'store']);
-    Route::post('/settings/{setting}/switch', [AttendanceController::class, 'switchAttendanceSetting']);
 });

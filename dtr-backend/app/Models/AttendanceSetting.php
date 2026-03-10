@@ -89,6 +89,16 @@ class AttendanceSetting extends Model
         $this->attributes[self::ACTIVE_STATUS_COLUMN] = $value;
     }
 
+    public function getAttendStatusAttribute(): bool
+    {
+        return (bool) $this->attributes[self::ACTIVE_STATUS_COLUMN] ?? false;
+    }
+
+    public function setAttendStatusAttribute(mixed $value): void
+    {
+        $this->attributes[self::ACTIVE_STATUS_COLUMN] = (bool) $value;
+    }
+
     public function breakDefinitions(): array
     {
         $definitions = [];

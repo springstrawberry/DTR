@@ -76,7 +76,7 @@ class AttendanceController extends Controller
 
         if ($todayLog === null) {
             $todayLog = $user->dtrLogs()
-                ->with('breaks')
+                ->with('breaks', 'attendanceSetting')
                 ->whereDate('date', $attendanceDate->toDateString())
                 ->first();
         }
@@ -116,13 +116,25 @@ class AttendanceController extends Controller
         $setting = $user->attendanceSettings()
             ->active()
             ->first()
-            ?? $user->attendanceSettings()->first()
-            ?? new AttendanceSetting([
-                'user_id' => $user->id,
-                AttendanceSetting::ACTIVE_STATUS_COLUMN => true,
-            ]);
+            ?? $user->attendanceSettings()->first();
 
-        $setting->fill($validated);
+        if ($setting === null) {
+            // Create new setting via raw insert to handle boolean properly
+            $newSettingId = DB::table('attendance_settings')->insertGetId([
+                'user_id' => $user->id,
+                AttendanceSetting::ACTIVE_STATUS_COLUMN => DB::raw('true'),
+                'morning_break_minutes' => $validated['morning_break_minutes'] ?? 0,
+                'lunch_break_minutes' => $validated['lunch_break_minutes'] ?? 0,
+                'afternoon_break_minutes' => $validated['afternoon_break_minutes'] ?? 0,
+                'shift_start_time' => $validated['shift_start_time'] ?? null,
+                'shift_end_time' => $validated['shift_end_time'] ?? null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $setting = AttendanceSetting::findOrFail($newSettingId);
+        } else {
+            $setting->fill($validated);
+        }
 
         if (($setting->formattedShiftStartTime() === null) xor ($setting->formattedShiftEndTime() === null)) {
             throw ValidationException::withMessages([
@@ -138,6 +150,45 @@ class AttendanceController extends Controller
         ]);
     }
 
+    public function createSettings(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'shift_start_time' => ['required', 'date_format:H:i'],
+            'shift_end_time' => ['required', 'date_format:H:i'],
+            'morning_break_minutes' => ['sometimes', 'integer', 'min:0', 'max:240'],
+            'lunch_break_minutes' => ['sometimes', 'integer', 'min:0', 'max:240'],
+            'afternoon_break_minutes' => ['sometimes', 'integer', 'min:0', 'max:240'],
+        ]);
+
+        $user = $request->user();
+
+        // Always create a new setting, deactivating all others
+        $newSettingId = DB::table('attendance_settings')->insertGetId([
+            'user_id' => $user->id,
+            AttendanceSetting::ACTIVE_STATUS_COLUMN => DB::raw('true'),
+            'morning_break_minutes' => $validated['morning_break_minutes'] ?? 0,
+            'lunch_break_minutes' => $validated['lunch_break_minutes'] ?? 0,
+            'afternoon_break_minutes' => $validated['afternoon_break_minutes'] ?? 0,
+            'shift_start_time' => $validated['shift_start_time'],
+            'shift_end_time' => $validated['shift_end_time'],
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // Deactivate all other settings
+        DB::table('attendance_settings')
+            ->where('user_id', $user->id)
+            ->where('id', '!=', $newSettingId)
+            ->update([AttendanceSetting::ACTIVE_STATUS_COLUMN => DB::raw('false')]);
+
+        $setting = AttendanceSetting::findOrFail($newSettingId);
+
+        return response()->json([
+            'message' => 'New shift created successfully.',
+            'all_settings' => $user->attendanceSettings->map(fn ($s) => $this->serializeAttendanceSetting($s))->values(),
+        ]);
+    }
+
     public function switchAttendanceSetting(Request $request, int $settingId): JsonResponse
     {
         $user = $request->user();
@@ -147,14 +198,16 @@ class AttendanceController extends Controller
             ->where('id', $settingId)
             ->firstOrFail();
 
-        // Deactivate all other settings
-        AttendanceSetting::query()
+        // Deactivate all other settings using raw query
+        DB::table('attendance_settings')
             ->where('user_id', $user->id)
-            ->where('id', '!=', $settingId)
-            ->update([AttendanceSetting::ACTIVE_STATUS_COLUMN => DB::raw('false')]);
+            ->where('id', '!=', $settingId) 
+            ->update([AttendanceSetting::ACTIVE_STATUS_COLUMN => DB::raw('false')]);   
 
-        // Activate the selected setting
-        $setting->update([AttendanceSetting::ACTIVE_STATUS_COLUMN => DB::raw('true')]);
+        // Activate the selected setting using raw query
+        DB::table('attendance_settings')
+            ->where('id', $settingId)
+            ->update([AttendanceSetting::ACTIVE_STATUS_COLUMN => DB::raw('true')]);
 
         $user->load('attendanceSettings');
 
@@ -466,6 +519,7 @@ class AttendanceController extends Controller
 
         return [
             'id' => $log->id,
+            'attendance_setting_id' => $setting?->id,
             'date' => $log->date?->toDateString(),
             'time_in' => $log->time_in?->toIso8601String(),
             'time_out' => $log->time_out?->toIso8601String(),

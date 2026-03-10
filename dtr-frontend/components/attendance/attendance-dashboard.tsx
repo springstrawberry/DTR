@@ -15,6 +15,7 @@ import {
   Coffee,
   Download,
   LogOut,
+  Plus,
   Save,
   SunMedium,
   TimerReset,
@@ -22,6 +23,7 @@ import {
 
 import { logoutAccount } from "@/lib/auth-api"
 import {
+  createAttendanceSetting,
   fetchAttendanceDashboard,
   recordAttendanceAction,
   switchAttendanceSetting,
@@ -169,6 +171,7 @@ export function AttendanceDashboard() {
   const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false)
   const [isBreakSetupOpen, setIsBreakSetupOpen] = useState(true)
   const [isScheduleSetupOpen, setIsScheduleSetupOpen] = useState(true)
+  const [isAddingNewShift, setIsAddingNewShift] = useState(false)
   const [pageError, setPageError] = useState("")
   const [pageNotice, setPageNotice] = useState("")
   const [settingsError, setSettingsError] = useState("")
@@ -404,14 +407,37 @@ export function AttendanceDashboard() {
     setScheduleNotice("")
 
     try {
-      const response = await updateAttendanceSettings(session.token, {
-        shift_start_time: settingsForm.shiftStartTime,
-        shift_end_time: settingsForm.shiftEndTime,
-      })
+      if (isAddingNewShift) {
+        // Create a new shift
+        const response = await createAttendanceSetting(session.token, {
+          shift_start_time: settingsForm.shiftStartTime,
+          shift_end_time: settingsForm.shiftEndTime,
+          morning_break_minutes: parseInt(settingsForm.morningBreakMinutes) || 0,
+          lunch_break_minutes: parseInt(settingsForm.lunchBreakMinutes) || 0,
+          afternoon_break_minutes: parseInt(settingsForm.afternoonBreakMinutes) || 0,
+        })
+        setScheduleNotice(response.message)
+      } else {
+        // Update existing shift
+        const response = await updateAttendanceSettings(session.token, {
+          shift_start_time: settingsForm.shiftStartTime,
+          shift_end_time: settingsForm.shiftEndTime,
+        })
+        setScheduleNotice(response.message)
+      }
 
       await refreshDashboard(session)
-      setScheduleNotice(response.message)
       setIsScheduleSetupOpen(false)
+      
+      // Clear form and reset add mode if we were adding a new shift
+      if (isAddingNewShift) {
+        setSettingsForm((current) => ({
+          ...current,
+          shiftStartTime: "",
+          shiftEndTime: "",
+        }))
+        setIsAddingNewShift(false)
+      }
     } catch (caughtError) {
       setScheduleError(
         caughtError instanceof Error
@@ -420,6 +446,29 @@ export function AttendanceDashboard() {
       )
     } finally {
       setIsSavingSchedule(false)
+    }
+  }
+
+  function handleStartAddingNewShift() {
+    setIsAddingNewShift(true)
+    setScheduleError("")
+    setScheduleNotice("")
+    setIsScheduleSetupOpen(true)
+    // Clear the form for new shift
+    setSettingsForm((current) => ({
+      ...current,
+      shiftStartTime: "",
+      shiftEndTime: "",
+    }))
+  }
+
+  function handleCancelAddingShift() {
+    setIsAddingNewShift(false)
+    setScheduleError("")
+    setScheduleNotice("")
+    // Reset form to the active setting values
+    if (dashboard) {
+      syncSettingsForm(dashboard)
     }
   }
 
@@ -789,16 +838,46 @@ export function AttendanceDashboard() {
                           </button>
                         )
                       })}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-2xl border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-medium text-violet-600 hover:border-violet-300 hover:bg-violet-100"
+                        onClick={handleStartAddingNewShift}
+                        disabled={isActing || isSavingSchedule}
+                      >
+                        <Plus className="size-4" />
+                        Add New Shift
+                      </Button>
                     </div>
+                  </div>
+                )}
+
+                {/* Prompt to add first shift if none exist */}
+                {(!dashboard?.all_settings || dashboard.all_settings.length === 0) && !isAddingNewShift && (
+                  <div className="mb-6 rounded-[1.25rem] border border-violet-200 bg-violet-50 p-4">
+                    <p className="mb-3 text-sm font-medium text-violet-900">
+                      No shifts created yet. Add your first shift to get started.
+                    </p>
+                    <Button
+                      type="button"
+                      className="rounded-2xl bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
+                      onClick={handleStartAddingNewShift}
+                      disabled={isActing || isSavingSchedule}
+                    >
+                      <Plus className="size-4" />
+                      Create First Shift
+                    </Button>
                   </div>
                 )}
 
                 {/* Form to save/edit shift times */}
                 <form onSubmit={handleScheduleSetupSubmit}>
                   <p className="mb-3 text-xs font-semibold tracking-[0.14em] text-slate-400 uppercase">
-                    {hasConfiguredSchedule
-                      ? "Edit active shift times"
-                      : "Add a new shift"}
+                    {isAddingNewShift
+                      ? "Create a new shift"
+                      : hasConfiguredSchedule
+                        ? "Edit active shift times"
+                        : "Add a new shift"}
                   </p>
                   <div className="grid gap-4 md:grid-cols-3">
                     <div className="space-y-2">
@@ -847,18 +926,33 @@ export function AttendanceDashboard() {
                       scheduled end time.
                     </p>
 
-                    <Button
-                      type="submit"
-                      className="h-11 rounded-2xl bg-slate-950 text-white hover:bg-slate-800"
-                      disabled={isSavingSchedule}
-                    >
-                      <Save className="size-4" />
-                      {isSavingSchedule
-                        ? "Saving..."
-                        : hasConfiguredSchedule
-                          ? "Save schedule changes"
-                          : "Save work schedule"}
-                    </Button>
+                    <div className="flex gap-3">
+                      {isAddingNewShift && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-11 rounded-2xl border-slate-200 bg-white px-6 text-slate-700"
+                          onClick={handleCancelAddingShift}
+                          disabled={isSavingSchedule}
+                        >
+                          Cancel
+                        </Button>
+                      )}
+                      <Button
+                        type="submit"
+                        className="h-11 rounded-2xl bg-slate-950 text-white hover:bg-slate-800"
+                        disabled={isSavingSchedule}
+                      >
+                        <Save className="size-4" />
+                        {isSavingSchedule
+                          ? "Saving..."
+                          : isAddingNewShift
+                            ? "Create Shift"
+                            : hasConfiguredSchedule
+                              ? "Save schedule changes"
+                              : "Save work schedule"}
+                      </Button>
+                    </div>
                   </div>
                 </form>
               </AccordionContent>
@@ -1279,11 +1373,16 @@ export function AttendanceDashboard() {
                           {formatDisplayDate(record.date)}
                         </TableCell>
                         <TableCell className="px-4 py-3 text-slate-600">
-                          {record.scheduled_start_time && record.scheduled_end_time
-                            ? `${formatTimeValue(record.scheduled_start_time) ?? "--:--"} - ${
-                                formatTimeValue(record.scheduled_end_time) ?? "--:--"
-                              }`
-                            : "No schedule"}
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs font-semibold text-slate-500">
+                              Shift ID: {record.attendance_setting_id ?? "--"}
+                            </span>
+                            {record.scheduled_start_time && record.scheduled_end_time
+                              ? `${formatTimeValue(record.scheduled_start_time) ?? "--:--"} - ${
+                                  formatTimeValue(record.scheduled_end_time) ?? "--:--"
+                                }`
+                              : "No schedule"}
+                          </div>
                         </TableCell>
                         <TableCell className="px-4 py-3">
                           <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-600">
