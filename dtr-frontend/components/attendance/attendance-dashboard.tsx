@@ -742,7 +742,13 @@ export function AttendanceDashboard() {
                       Your work shifts — click any to make it active
                     </p>
                     <div className="flex flex-wrap gap-2">
-                      {dashboard.all_settings.map((setting, index) => {
+                      {dashboard.all_settings
+                        .sort((a, b) => {
+                          const aTime = a.shift_start_time ?? ""
+                          const bTime = b.shift_start_time ?? ""
+                          return aTime.localeCompare(bTime)
+                        })
+                        .map((setting, index) => {
                         const startLabel =
                           formatTimeValue(setting.shift_start_time) ?? "--:--"
                         const endLabel =
@@ -1233,64 +1239,6 @@ export function AttendanceDashboard() {
                   {dashboard?.user.name ?? session?.user.name}
                 </h2>
               </div>
-              {/* <div className="rounded-[1.25rem] bg-slate-50 px-4 py-3 text-right">
-                <p className="text-sm text-slate-500">Current shift</p>
-                <p className="mt-1 text-sm font-medium text-slate-700">
-                  {dashboard?.today.time_in
-                    ? `${formatClockTime(dashboard.today.time_in)} to ${
-                        dashboard.today.time_out
-                          ? formatClockTime(dashboard.today.time_out)
-                          : "Open"
-                      }`
-                    : "No attendance recorded yet"}
-                </p>
-                <p className="mt-2 text-sm text-slate-500">Scheduled shift</p>
-                <p className="mt-1 text-sm font-medium text-slate-700">
-                  {dashboard?.settings.schedule_label
-                    ? `${formatTimeValue(dashboard.settings.shift_start_time) ?? "--:--"} to ${
-                        formatTimeValue(dashboard.settings.shift_end_time) ?? "--:--"
-                      }`
-                    : "Set work schedule"}
-                </p>
-                {dashboard ? (
-                  <div className="mt-3 flex flex-wrap justify-end gap-2">
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        dashboard.today.status === "absent"
-                          ? "bg-rose-100 text-rose-700"
-                          : dashboard.today.late_minutes > 0
-                          ? "bg-rose-100 text-rose-700"
-                          : "bg-slate-200 text-slate-600"
-                      }`}
-                    >
-                      {dashboard.today.status === "absent"
-                        ? "Marked absent"
-                        : dashboard.today.time_in
-                        ? dashboard.today.late_minutes > 0
-                          ? `Late: ${dashboard.today.late_minutes} min`
-                          : "Late: 0 min"
-                        : "Awaiting clock in"}
-                    </span>
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        dashboard.today.status === "absent"
-                          ? "bg-slate-200 text-slate-500"
-                          : dashboard.today.undertime_minutes > 0
-                          ? "bg-amber-100 text-amber-700"
-                          : "bg-slate-200 text-slate-600"
-                      }`}
-                    >
-                      {dashboard.today.status === "absent"
-                        ? "No clock out"
-                        : dashboard.today.time_out
-                        ? dashboard.today.undertime_minutes > 0
-                          ? `Undertime: ${dashboard.today.undertime_minutes} min`
-                          : "No undertime"
-                        : "Awaiting clock out"}
-                    </span>
-                  </div>
-                ) : null}
-              </div> */}
             </div>
 
             <div className="overflow-hidden rounded-[1.75rem] border border-slate-100">

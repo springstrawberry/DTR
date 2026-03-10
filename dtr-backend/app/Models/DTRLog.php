@@ -40,6 +40,11 @@ class DTRLog extends Model
         return $this->belongsTo(User::class);
     }
 
+    public function attendanceSetting(): BelongsTo
+    {
+        return $this->belongsTo(AttendanceSetting::class, 'attend_setting');
+    }
+
     public function breaks(): HasMany
     {
         return $this->hasMany(DTRBreak::class, 'dtr_log_id');

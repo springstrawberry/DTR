@@ -60,7 +60,7 @@ class AttendanceController extends Controller
         }
 
         $monthLogs = $user->dtrLogs()
-            ->with('breaks')
+            ->with('breaks', 'attendanceSetting')
             ->whereBetween('date', [
                 $selectedMonth->toDateString(),
                 $selectedMonth->endOfMonth()->toDateString(),
@@ -90,7 +90,7 @@ class AttendanceController extends Controller
             'today' => $this->serializeToday($todayLog, $setting, $attendanceDate, $today),
             'summary' => $this->serializeSummary($monthLogs, $setting, $selectedMonth, $today),
             'records' => $monthLogs
-                ->map(fn (DTRLog $log): array => $this->serializeRecord($log, $setting))
+                ->map(fn (DTRLog $log): array => $this->serializeRecord($log, $log->attendanceSetting ?? $setting))
                 ->values(),
         ]);
     }
